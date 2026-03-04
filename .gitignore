@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+
+captured_videos/
+saved_experiments/
+*.npy
+
+.env
+.vscode/
+.idea/
