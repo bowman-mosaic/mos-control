@@ -4,35 +4,56 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MOS-11 Control System</title>
-<script type="text/javascript" src="/eel.js"></script>
+<script>
+async function api(name, ...args) {
+  const resp = await fetch('/api/' + name, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({args: args})
+  });
+  return resp.json();
+}
+
+const _eventHandlers = {};
+let _lastEventId = 0;
+function onEvent(name, fn) { _eventHandlers[name] = fn; }
+setInterval(async () => {
+  try {
+    const resp = await fetch('/api/events?since=' + _lastEventId);
+    const events = await resp.json();
+    for (const evt of events) {
+      _lastEventId = Math.max(_lastEventId, evt.id);
+      const h = _eventHandlers[evt.name];
+      if (h) h(...evt.args);
+    }
+  } catch(e) {}
+}, 400);
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-/* ═══════════════════════════════════════════════════════════════════════════
-   VARIABLES
-   ═══════════════════════════════════════════════════════════════════════════ */
 :root {
-  --bg:         #0c0f14;
-  --surface:    rgba(255,255,255,.04);
-  --card:       rgba(255,255,255,.06);
-  --card-hover: rgba(255,255,255,.08);
-  --accent:     #6c63ff;
-  --accent-glow:rgba(108,99,255,.25);
-  --green:      #34d399;
-  --green-glow: rgba(52,211,153,.2);
-  --red:        #f87171;
-  --red-glow:   rgba(248,113,113,.2);
-  --amber:      #fbbf24;
-  --blue:       #60a5fa;
-  --blue-glow:  rgba(96,165,250,.2);
-  --text:       #e8eaed;
-  --text2:      #9aa0a6;
-  --text3:      #5f6368;
-  --border:     rgba(255,255,255,.08);
-  --input-bg:   rgba(255,255,255,.05);
-  --input-border:rgba(255,255,255,.1);
-  --radius:     12px;
-  --radius-sm:  8px;
+  --bg:         #f0f4f8;
+  --surface:    #ffffff;
+  --card:       #ffffff;
+  --card-hover: #f7f9fc;
+  --accent:     #3b82f6;
+  --accent-glow:rgba(59,130,246,.15);
+  --green:      #10b981;
+  --green-glow: rgba(16,185,129,.12);
+  --red:        #ef4444;
+  --red-glow:   rgba(239,68,68,.1);
+  --amber:      #f59e0b;
+  --blue:       #3b82f6;
+  --blue-glow:  rgba(59,130,246,.12);
+  --text:       #1e293b;
+  --text2:      #475569;
+  --text3:      #94a3b8;
+  --border:     #e2e8f0;
+  --input-bg:   #f8fafc;
+  --input-border:#cbd5e1;
+  --radius:     10px;
+  --radius-sm:  6px;
   --sidebar-w:  60px;
 }
 * { box-sizing:border-box; margin:0; padding:0; }
@@ -40,33 +61,34 @@ body {
   font-family:'Inter',system-ui,-apple-system,sans-serif;
   background:var(--bg); color:var(--text);
   font-size:13px; line-height:1.5; height:100vh; overflow:hidden;
+  -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   LAYOUT
-   ═══════════════════════════════════════════════════════════════════════════ */
+::-webkit-scrollbar { width:6px; height:6px; }
+::-webkit-scrollbar-track { background:transparent; }
+::-webkit-scrollbar-thumb { background:#c1cfe0; border-radius:3px; }
+::-webkit-scrollbar-thumb:hover { background:#94a3b8; }
+
+/* LAYOUT */
 .app        { display:flex; flex-direction:column; height:100vh; }
 .topbar     { display:flex; align-items:center; justify-content:space-between;
               padding:10px 20px; border-bottom:1px solid var(--border);
-              background:rgba(255,255,255,.02); backdrop-filter:blur(20px);
-              flex-shrink:0; z-index:10; }
+              background:#ffffff; backdrop-filter:blur(20px);
+              flex-shrink:0; z-index:10; box-shadow:0 1px 3px rgba(0,0,0,.05); }
 .topbar h1  { font-size:16px; font-weight:700; display:flex; align-items:center; gap:10px; }
 .topbar .logo { width:30px;height:30px;border-radius:8px;background:var(--accent);
-                display:flex;align-items:center;justify-content:center;font-size:14px; }
+                display:flex;align-items:center;justify-content:center;font-size:14px;color:#fff; }
 .topbar-right { display:flex; align-items:center; gap:16px; }
 .status-row { display:flex; gap:10px; align-items:center; }
-
 .indicator { display:flex; align-items:center; gap:4px; font-size:11px; font-weight:600;
              color:var(--text3); }
-.indicator .dot { width:8px;height:8px;border-radius:50%;background:var(--text3);
+.indicator .dot { width:8px;height:8px;border-radius:50%;background:#cbd5e1;
                   transition:background .2s; }
 .indicator.on .dot  { background:var(--green); box-shadow:0 0 6px var(--green-glow); }
 .indicator.on       { color:var(--green); }
-
 .app-body   { display:flex; flex:1; overflow:hidden; }
 
-/* ── sidebar ───────────────────────────────── */
-.sidebar    { width:var(--sidebar-w); background:rgba(255,255,255,.02);
+.sidebar    { width:var(--sidebar-w); background:#ffffff;
               border-right:1px solid var(--border); display:flex;
               flex-direction:column; padding:8px 6px; gap:4px; flex-shrink:0; }
 .nav-item   { display:flex; flex-direction:column; align-items:center;
@@ -74,42 +96,36 @@ body {
               color:var(--text3); text-decoration:none; transition:all .15s;
               font-size:9px; font-weight:600; letter-spacing:.3px; gap:5px;
               user-select:none; }
-.nav-item:hover { background:var(--card); color:var(--text2); }
-.nav-item.active { background:var(--accent); color:#fff; }
+.nav-item:hover { background:#e0eaff; color:var(--accent); }
+.nav-item.active { background:var(--accent); color:#fff; box-shadow:0 2px 8px rgba(59,130,246,.25); }
 .nav-icon   { font-size:18px; line-height:1; }
 
-/* ── content ───────────────────────────────── */
-.content    { flex:1; overflow-y:auto; padding:16px 20px; }
+.content    { flex:1; overflow-y:auto; padding:16px 20px; background:var(--bg); }
 .panel      { display:none; }
 .panel.active { display:block; }
 .panel-title { font-size:18px; font-weight:700; margin-bottom:16px;
                display:flex; align-items:center; gap:8px; }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   COMPONENTS
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-/* ── buttons ─────────────────────── */
+/* COMPONENTS */
 .btn { display:inline-flex; align-items:center; justify-content:center; gap:4px;
        padding:6px 14px; border-radius:6px; font-size:12px; font-weight:500;
        font-family:inherit; border:1px solid var(--border); cursor:pointer;
        background:var(--card); color:var(--text); transition:all .15s ease; }
-.btn:hover   { background:var(--card-hover); border-color:rgba(255,255,255,.15);
-               transform:translateY(-1px); }
+.btn:hover   { background:var(--card-hover); border-color:#94a3b8;
+               transform:translateY(-1px); box-shadow:0 2px 8px rgba(0,0,0,.06); }
 .btn:active  { transform:translateY(0); }
 .btn:disabled{ opacity:.35; cursor:not-allowed; transform:none; }
 .btn.accent  { background:var(--accent); border-color:var(--accent); color:#fff; }
 .btn.accent:hover { box-shadow:0 4px 16px var(--accent-glow); }
-.btn.green   { background:var(--green); border-color:var(--green); color:#111; font-weight:600; }
+.btn.green   { background:var(--green); border-color:var(--green); color:#fff; font-weight:600; }
 .btn.green:hover  { box-shadow:0 4px 16px var(--green-glow); }
-.btn.red     { background:var(--red); border-color:var(--red); color:#111; font-weight:600; }
+.btn.red     { background:var(--red); border-color:var(--red); color:#fff; font-weight:600; }
 .btn.red:hover    { box-shadow:0 4px 16px var(--red-glow); }
-.btn.blue    { background:var(--blue); border-color:var(--blue); color:#111; font-weight:600; }
+.btn.blue    { background:var(--blue); border-color:var(--blue); color:#fff; font-weight:600; }
 .btn.blue:hover   { box-shadow:0 4px 16px var(--blue-glow); }
 .btn-sm { padding:4px 10px; font-size:11px; }
 .btn-row { display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; }
 
-/* ── inputs ──────────────────────── */
 input,select { font-family:inherit; font-size:12px; color:var(--text);
                background:var(--input-bg); border:1px solid var(--input-border);
                padding:5px 8px; border-radius:6px; outline:none;
@@ -117,40 +133,35 @@ input,select { font-family:inherit; font-size:12px; color:var(--text);
 input:focus,select:focus { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-glow); }
 input[type=number] { width:64px; }
 select { min-width:74px; cursor:pointer; }
-option { background:#1a1d24; }
+option { background:#fff; }
 
-/* ── cards ───────────────────────── */
 .card { background:var(--surface); border:1px solid var(--border);
-        border-radius:var(--radius); overflow:hidden; transition:border-color .2s; }
-.card:hover { border-color:rgba(255,255,255,.12); }
-.card.connected { border-color:rgba(52,211,153,.3); }
+        border-radius:var(--radius); overflow:hidden; transition:border-color .2s;
+        box-shadow:0 1px 3px rgba(0,0,0,.04); }
+.card:hover { border-color:#94a3b8; }
+.card.connected { border-color:rgba(16,185,129,.4); }
 .card-head { padding:10px 14px; display:flex; align-items:center;
              justify-content:space-between; border-bottom:1px solid var(--border);
              background:var(--card); }
 .card-head .title { font-size:13px; font-weight:700; }
 .badge { font-size:10px; font-weight:600; text-transform:uppercase;
          letter-spacing:.5px; padding:3px 8px; border-radius:20px;
-         background:rgba(255,255,255,.06); color:var(--text3); }
+         background:#e2e8f0; color:var(--text2); }
 .badge.on { background:var(--green-glow); color:var(--green); }
 
 .section { padding:10px 14px; border-top:1px solid var(--border); }
+.section:first-child { border-top:none; }
 .section-label { font-size:10px; font-weight:700; text-transform:uppercase;
                  letter-spacing:.8px; color:var(--text3); margin-bottom:8px; }
 .field { display:flex; align-items:center; gap:6px; margin-bottom:6px; }
 .field label { font-size:12px; color:var(--text2); min-width:58px; font-weight:500; }
 
-/* ── time input group ────────────── */
 .time-group { display:flex; align-items:center; gap:2px; }
 .time-group input { width:36px; text-align:center; padding:5px 2px; }
 .time-group .sep { color:var(--text3); font-weight:700; font-size:14px; }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   PANEL: PUMPS
-   ═══════════════════════════════════════════════════════════════════════════ */
-.pump-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr));
-             gap:12px; }
-
-/* ── protocol table ────────────── */
+/* PUMPS */
+.pump-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:12px; }
 .proto-wrap { border:1px solid var(--border); border-radius:var(--radius-sm);
               overflow:hidden; margin-bottom:8px; }
 .proto-table { width:100%; border-collapse:collapse; font-size:11px; }
@@ -159,78 +170,148 @@ option { background:#1a1d24; }
                   text-transform:uppercase; letter-spacing:.5px; }
 .proto-table td { padding:5px 8px; border-top:1px solid var(--border); }
 .proto-table tbody tr { cursor:pointer; transition:background .1s; }
-.proto-table tbody tr:hover { background:rgba(255,255,255,.03); }
-.proto-table tbody tr.selected { background:rgba(248,113,113,.1); }
-.proto-table tbody tr.active   { background:rgba(108,99,255,.15); }
+.proto-table tbody tr:hover { background:#f1f5f9; }
+.proto-table tbody tr.selected { background:rgba(239,68,68,.08); }
+.proto-table tbody tr.active   { background:rgba(59,130,246,.08); }
 .tag { display:inline-block; padding:1px 6px; border-radius:4px;
        font-size:10px; font-weight:600; }
-.tag-run  { background:rgba(52,211,153,.15);  color:var(--green); }
-.tag-stop { background:rgba(248,113,113,.15); color:var(--red); }
-.tag-img  { background:rgba(147,130,255,.15); color:#9382ff; }
+.tag-run  { background:rgba(16,185,129,.1);  color:#059669; }
+.tag-stop { background:rgba(239,68,68,.1); color:var(--red); }
+.tag-img  { background:rgba(59,130,246,.1); color:var(--blue); }
 .proto-empty  { padding:12px; text-align:center; color:var(--text3); font-size:11px; }
 .proto-status { font-size:11px; color:var(--accent); margin-top:6px; min-height:16px; }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   PANEL: CAMERA
-   ═══════════════════════════════════════════════════════════════════════════ */
-.cam-layout { display:grid; grid-template-columns:1fr 300px; gap:16px; }
-@media (max-width:800px) { .cam-layout { grid-template-columns:1fr; } }
-.preview-area { background:#000; border-radius:var(--radius); overflow:hidden;
-                min-height:300px; display:flex; align-items:center;
-                justify-content:center; position:relative; }
-.preview-area img { max-width:100%; max-height:500px; object-fit:contain; display:none; }
-.preview-placeholder { color:var(--text3); font-size:13px; text-align:center; padding:32px; }
-.cam-sidebar { display:flex; flex-direction:column; gap:12px; }
+/* SCOPE SETUP */
+.scope-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:10px; }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   PANEL: EXPERIMENT
-   ═══════════════════════════════════════════════════════════════════════════ */
-.dual-proto { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-@media (max-width:700px) { .dual-proto { grid-template-columns:1fr; } }
-.exp-bar { display:flex; align-items:center; gap:10px; margin-bottom:16px; flex-wrap:wrap; }
-.exp-bar input[type=text] { flex:1; min-width:160px; }
+/* CAMERA SETUP */
+.cam-setup-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:10px; }
 
-.exp-controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+/* PRESET CARDS */
+.preset-list { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+.preset-chip { display:inline-flex; align-items:center; gap:6px; padding:5px 12px;
+               border-radius:20px; background:var(--card); border:1px solid var(--border);
+               font-size:11px; cursor:pointer; transition:all .15s; }
+.preset-chip:hover { border-color:var(--accent); background:var(--accent-glow); }
+.preset-chip.active { border-color:var(--accent); background:var(--accent-glow); color:var(--accent); }
+.preset-chip .del { color:var(--red); font-weight:700; cursor:pointer; margin-left:2px; }
+.preset-chip .del:hover { text-decoration:underline; }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   PANEL: LOG
-   ═══════════════════════════════════════════════════════════════════════════ */
+/* LIVE VIEW */
+.live-layout { display:flex; flex-direction:column; height:calc(100vh - 100px); }
+.live-preview { flex:1; background:#000; border-radius:var(--radius); overflow:hidden;
+                display:flex; align-items:center; justify-content:center; position:relative;
+                min-height:0; }
+.live-preview img { max-width:100%; max-height:100%; object-fit:contain; display:none; }
+.live-placeholder { color:var(--text3); font-size:14px; text-align:center; padding:32px; }
+.live-overlay { position:absolute; bottom:12px; left:50%; transform:translateX(-50%);
+                display:flex; gap:6px; background:rgba(0,0,0,.65); padding:6px 12px;
+                border-radius:8px; backdrop-filter:blur(8px); }
+.live-fps { position:absolute; top:10px; right:10px; font-size:12px; font-weight:600;
+            color:var(--green); background:rgba(0,0,0,.6); padding:3px 10px;
+            border-radius:4px; display:none; }
+.live-quick { display:flex; gap:8px; align-items:center; padding:8px 0; flex-wrap:wrap; }
+.filmstrip { display:flex; gap:6px; padding:8px 0; overflow-x:auto; min-height:40px; }
+.filmstrip-item { flex-shrink:0; font-size:10px; color:var(--text2); padding:4px 10px;
+                  background:var(--card); border:1px solid var(--border); border-radius:6px; }
+
+/* TIMELINE */
+.tl-layout { display:flex; flex-direction:column; gap:10px; height:calc(100vh - 100px); }
+.tl-toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; flex-shrink:0; }
+.tl-toolbar .sep { width:1px; height:20px; background:var(--border); margin:0 4px; }
+.tl-progress { font-size:12px; color:var(--text2); margin-left:auto; }
+
+.tl-ruler-wrap { flex:1; min-height:0; display:flex; flex-direction:column;
+                 border:1px solid var(--border); border-radius:var(--radius);
+                 background:var(--surface); overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,.04); }
+.tl-ruler-scroll { flex:1; overflow-x:auto; overflow-y:auto; position:relative; }
+.tl-ruler { position:relative; min-height:100%; }
+.tl-ruler-axis { position:sticky; top:0; z-index:5; height:28px;
+                 background:var(--card); border-bottom:1px solid var(--border); }
+.tl-ruler-axis canvas { display:block; }
+
+.tl-lanes { position:relative; min-height:120px; padding:6px 0; }
+.tl-lane-label { position:absolute; left:0; width:56px; z-index:3;
+                 font-size:9px; font-weight:700; text-transform:uppercase;
+                 letter-spacing:.4px; color:var(--text3); text-align:right;
+                 padding-right:8px; pointer-events:none; }
+.tl-lane { position:relative; height:40px; margin-bottom:4px; margin-left:56px; }
+.tl-lane-bg { position:absolute; inset:0; border-radius:4px;
+              background:repeating-linear-gradient(90deg,transparent,transparent 49.5%,
+              var(--border) 49.5%,var(--border) 50.5%,transparent 50.5%); opacity:.3; }
+
+.tl-event { position:absolute; top:2px; height:36px; border-radius:5px; cursor:pointer;
+            display:flex; align-items:center; padding:0 8px; font-size:10px; font-weight:600;
+            color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+            transition:box-shadow .15s; user-select:none; min-width:20px; }
+.tl-event:hover { box-shadow:0 2px 10px rgba(0,0,0,.15); }
+.tl-event.selected { box-shadow:0 0 0 2px var(--accent), 0 2px 10px rgba(0,0,0,.15); }
+.tl-event.running { box-shadow:0 0 0 2px var(--green), 0 0 12px var(--green-glow); }
+.tl-event .ev-label { overflow:hidden; text-overflow:ellipsis; flex:1; }
+.tl-event .ev-handle { position:absolute; top:0; width:6px; height:100%; cursor:ew-resize; }
+.tl-event .ev-handle.left { left:0; border-radius:5px 0 0 5px; }
+.tl-event .ev-handle.right { right:0; border-radius:0 5px 5px 0; }
+.tl-event .ev-handle:hover { background:rgba(255,255,255,.25); }
+.tl-ev-video { background:linear-gradient(135deg,#3b82f6,#2563eb); }
+.tl-ev-stack { background:linear-gradient(135deg,#8b5cf6,#7c3aed); }
+.tl-ev-timelapse { background:linear-gradient(135deg,#10b981,#059669); }
+.tl-ev-pump { background:linear-gradient(135deg,#f59e0b,#d97706); }
+
+.tl-lane-row { position:relative; display:flex; align-items:center; }
+.tl-lane-actions { position:absolute; right:4px; top:50%; transform:translateY(-50%);
+                   z-index:3; display:flex; gap:2px; }
+.tl-lane-actions button { background:none; border:none; cursor:pointer; color:var(--text3);
+                          font-size:14px; line-height:1; padding:2px; }
+.tl-lane-actions button:hover { color:var(--red); }
+
+.tl-playhead { position:absolute; top:0; bottom:0; width:2px; background:var(--red);
+               z-index:4; pointer-events:none; transition:left .1s linear; }
+.tl-playhead::before { content:''; position:absolute; top:-2px; left:-4px;
+                       border:5px solid transparent; border-top-color:var(--red); }
+
+.tl-editor { border:1px solid var(--border); border-radius:var(--radius);
+             background:var(--surface); padding:14px; flex-shrink:0;
+             box-shadow:0 1px 3px rgba(0,0,0,.04); display:none; }
+.tl-editor.open { display:block; }
+.tl-editor .ed-title { font-size:13px; font-weight:700; margin-bottom:10px;
+                       display:flex; align-items:center; justify-content:space-between; }
+.tl-editor .ed-grid { display:flex; flex-wrap:wrap; gap:10px 20px; }
+.tl-editor .ed-col { display:flex; flex-direction:column; gap:6px; min-width:140px; }
+
+/* LOG */
 .log-container { background:var(--surface); border:1px solid var(--border);
                  border-radius:var(--radius); padding:4px 0;
                  max-height:calc(100vh - 180px); overflow-y:auto;
                  font-family:'Cascadia Code','Fira Code',monospace; font-size:12px; }
 .log-entry { padding:4px 14px; display:flex; gap:10px; align-items:baseline;
-             border-bottom:1px solid rgba(255,255,255,.03); }
+             border-bottom:1px solid #e2e8f0; }
 .log-entry:last-child { border-bottom:none; }
 .log-time  { color:var(--text3); font-size:11px; flex-shrink:0; min-width:60px; }
 .log-badge { font-size:10px; font-weight:600; padding:1px 6px; border-radius:4px;
              flex-shrink:0; min-width:56px; text-align:center; }
-.log-badge.pump   { background:rgba(108,99,255,.15); color:var(--accent); }
-.log-badge.camera { background:rgba(96,165,250,.15);  color:var(--blue); }
-.log-badge.exp    { background:rgba(251,191,36,.15);   color:var(--amber); }
-.log-badge.sys    { background:rgba(255,255,255,.06);  color:var(--text3); }
+.log-badge.pump   { background:rgba(59,130,246,.1); color:var(--accent); }
+.log-badge.camera { background:rgba(59,130,246,.08);  color:var(--blue); }
+.log-badge.exp    { background:rgba(245,158,11,.1);   color:#b45309; }
+.log-badge.sys    { background:#e2e8f0;  color:var(--text2); }
 .log-badge.err    { background:var(--red-glow);        color:var(--red); }
 .log-msg   { color:var(--text2); word-break:break-word; }
 .log-empty { padding:32px; text-align:center; color:var(--text3); }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   TOASTS
-   ═══════════════════════════════════════════════════════════════════════════ */
+/* TOASTS */
 #toasts { position:fixed; bottom:20px; right:20px; z-index:999;
           display:flex; flex-direction:column-reverse; gap:8px; }
 .toast { padding:10px 16px; border-radius:8px; font-size:12px; font-weight:500;
-         background:#1e2028; border:1px solid var(--border); color:var(--text);
-         box-shadow:0 8px 32px rgba(0,0,0,.4); animation:slideIn .25s ease;
+         background:#ffffff; border:1px solid var(--border); color:var(--text);
+         box-shadow:0 8px 32px rgba(0,0,0,.1); animation:slideIn .25s ease;
          max-width:380px; }
-.toast.error   { border-color:rgba(248,113,113,.3); color:var(--red); }
-.toast.success { border-color:rgba(52,211,153,.3);  color:var(--green); }
+.toast.error   { border-color:rgba(239,68,68,.3); color:var(--red); }
+.toast.success { border-color:rgba(16,185,129,.3);  color:var(--green); }
 @keyframes slideIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
 </style>
 </head>
 <body>
 <div class="app">
 
-  <!-- ═══════════ TOP BAR ═══════════ -->
   <header class="topbar">
     <h1><span class="logo">&#9881;</span> MOS-11 Control</h1>
     <div class="topbar-right">
@@ -239,6 +320,7 @@ option { background:#1a1d24; }
         <span class="indicator" id="indP1"><span class="dot"></span>P2</span>
         <span class="indicator" id="indP2"><span class="dot"></span>P3</span>
         <span class="indicator" id="indP3"><span class="dot"></span>P4</span>
+        <span class="indicator" id="indScope"><span class="dot"></span>SCOPE</span>
         <span class="indicator" id="indCam"><span class="dot"></span>CAM</span>
       </div>
       <button class="btn btn-sm accent" onclick="refreshPorts()">Refresh Ports</button>
@@ -247,197 +329,400 @@ option { background:#1a1d24; }
 
   <div class="app-body">
 
-    <!-- ═══════════ SIDEBAR ═══════════ -->
     <nav class="sidebar">
-      <a class="nav-item active" data-panel="pumps"      onclick="switchPanel('pumps')">
+      <a class="nav-item active" data-panel="pumps" onclick="switchPanel('pumps')">
         <span class="nav-icon">&#9879;</span>Pumps</a>
-      <a class="nav-item"        data-panel="camera"     onclick="switchPanel('camera')">
-        <span class="nav-icon">&#9673;</span>Camera</a>
-      <a class="nav-item"        data-panel="experiment" onclick="switchPanel('experiment')">
-        <span class="nav-icon">&#9889;</span>Sync</a>
-      <a class="nav-item"        data-panel="log"        onclick="switchPanel('log')">
+      <a class="nav-item" data-panel="scope-setup" onclick="switchPanel('scope-setup')">
+        <span class="nav-icon">&#128300;</span>Setup</a>
+      <a class="nav-item" data-panel="cam-setup" onclick="switchPanel('cam-setup')">
+        <span class="nav-icon">&#128247;</span>Camera</a>
+      <a class="nav-item" data-panel="live" onclick="switchPanel('live')">
+        <span class="nav-icon">&#128065;</span>Live</a>
+      <a class="nav-item" data-panel="timeline" onclick="switchPanel('timeline')">
+        <span class="nav-icon">&#9202;</span>Timeline</a>
+      <a class="nav-item" data-panel="log" onclick="switchPanel('log')">
         <span class="nav-icon">&#9776;</span>Log</a>
     </nav>
 
-    <!-- ═══════════ MAIN CONTENT ═══════════ -->
     <div class="content">
 
-      <!-- ────────── PUMPS PANEL ────────── -->
+      <!-- ════════ PUMPS ════════ -->
       <section id="panel-pumps" class="panel active">
         <div class="panel-title">Syringe Pumps</div>
         <div class="pump-grid" id="pumpGrid"></div>
       </section>
 
-      <!-- ────────── CAMERA PANEL ────────── -->
-      <section id="panel-camera" class="panel">
-        <div class="panel-title">Camera</div>
-        <div class="cam-layout">
-          <div>
-            <div class="preview-area" id="previewArea">
-              <img id="camPreview" alt="preview">
-              <div class="preview-placeholder" id="previewPlaceholder">
-                No preview &mdash; connect camera and click <strong>Snap</strong>
-              </div>
-            </div>
-            <div class="btn-row" style="margin-top:10px">
-              <button class="btn blue btn-sm" onclick="cameraSnap()">Snap</button>
-              <button class="btn btn-sm" id="liveBtn" onclick="toggleLive()">Live</button>
-            </div>
-          </div>
-          <div class="cam-sidebar">
-            <div class="card">
-              <div class="card-head"><span class="title">Connection</span>
-                <span class="badge" id="camBadge">Offline</span></div>
-              <div class="section">
-                <div class="btn-row">
-                  <button class="btn green btn-sm" id="camConnBtn" onclick="cameraConnect()">Connect</button>
-                  <button class="btn red btn-sm"   id="camDiscBtn" onclick="cameraDisconnect()" disabled>Disconnect</button>
-                </div>
-                <p style="margin-top:8px;font-size:11px;color:var(--text3)">
-                  Micro-Manager must be running with the server enabled on port 4827.</p>
-              </div>
-            </div>
-            <div class="card">
-              <div class="card-head"><span class="title">Capture</span></div>
-              <div class="section">
-                <div class="field">
-                  <label>Duration</label>
-                  <input type="number" id="capDuration" value="10" min="1" step="1" style="width:56px">
-                  <span style="color:var(--text3);font-size:11px">sec</span>
-                </div>
-                <div class="field">
-                  <label>FPS</label>
-                  <input type="number" id="capFps" value="10" min="1" max="100" step="1" style="width:56px">
-                </div>
-                <div class="btn-row">
-                  <button class="btn accent btn-sm" onclick="cameraCapture()">Record Video</button>
-                </div>
-                <div class="proto-status" id="camStatus"></div>
-              </div>
-            </div>
-            <div class="card">
-              <div class="card-head"><span class="title">Recent Captures</span></div>
-              <div class="section" id="recentCaptures" style="max-height:160px;overflow-y:auto">
-                <div class="proto-empty">No captures yet</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
+      <!-- ════════ MICROSCOPE SETUP ════════ -->
+      <section id="panel-scope-setup" class="panel">
+        <div class="panel-title">Microscope Setup</div>
+        <div class="scope-grid">
 
-      <!-- ────────── EXPERIMENT / SYNC PANEL ────────── -->
-      <section id="panel-experiment" class="panel">
-        <div class="panel-title">Experiment Sync</div>
-
-        <!-- save / load bar -->
-        <div class="exp-bar">
-          <input type="text" id="expName" placeholder="Experiment name" value="experiment-1">
-          <button class="btn btn-sm" onclick="syncSave()">Save</button>
-          <select id="expLoadSelect" style="min-width:140px"><option value="">Load ...</option></select>
-          <button class="btn btn-sm" onclick="syncLoadExp()">Load</button>
-          <button class="btn btn-sm" onclick="refreshExpList()">&#8635;</button>
-        </div>
-
-        <!-- dual protocol editors -->
-        <div class="dual-proto">
-
-          <!-- ── pump protocol column ── -->
+          <!-- Nikon Ti Connection -->
           <div class="card">
-            <div class="card-head">
-              <span class="title">Pump Protocol</span>
-              <select id="syncPumpSel" style="font-size:11px;padding:3px 6px">
-                <option value="0">Pump 1</option><option value="1">Pump 2</option>
-                <option value="2">Pump 3</option><option value="3">Pump 4</option>
-              </select>
-            </div>
+            <div class="card-head"><span class="title">Nikon Ti</span>
+              <span class="badge" id="scopeTiBadge">Offline</span></div>
             <div class="section">
-              <div class="proto-wrap">
-                <table class="proto-table">
-                  <thead><tr><th>Action</th><th>Rate</th><th>Units</th><th>Time</th></tr></thead>
-                  <tbody id="syncPumpBody"></tbody>
-                </table>
-                <div class="proto-empty" id="syncPumpEmpty">No steps</div>
-              </div>
-              <div class="field">
-                <select id="spAction"><option>Run</option><option>Stop</option></select>
-                <input type="number" id="spRate" placeholder="Rate" step="0.1" style="width:54px">
-                <select id="spUnits"><option>ML/MIN</option><option>ML/HR</option>
-                  <option>UL/MIN</option><option>UL/HR</option></select>
-              </div>
-              <div class="field">
-                <label>Time</label>
-                <div class="time-group">
-                  <input type="number" id="spHH" value="0" min="0" max="99">
-                  <span class="sep">:</span>
-                  <input type="number" id="spMM" value="0" min="0" max="59">
-                  <span class="sep">:</span>
-                  <input type="number" id="spSS" value="0" min="0" max="59">
-                </div>
-              </div>
               <div class="btn-row">
-                <button class="btn btn-sm" onclick="syncPumpAdd()">Add</button>
-                <button class="btn btn-sm" onclick="syncPumpRemove()">Remove</button>
-                <button class="btn btn-sm" onclick="syncPumpClear()">Clear</button>
+                <button class="btn green btn-sm" id="scopeTiConn" onclick="scopeTiConnect()">Connect</button>
+                <button class="btn red btn-sm" id="scopeTiDisc" onclick="scopeTiDisconnect()" disabled>Disconnect</button>
               </div>
-              <div class="proto-status" id="syncPumpStatus"></div>
             </div>
           </div>
 
-          <!-- ── camera protocol column ── -->
+          <!-- Shutter -->
           <div class="card">
-            <div class="card-head">
-              <span class="title">Camera Protocol</span>
-            </div>
+            <div class="card-head"><span class="title">Shutter (Lambda SC)</span>
+              <span class="badge" id="scopeShutterBadge">-</span></div>
             <div class="section">
-              <div class="proto-wrap">
-                <table class="proto-table">
-                  <thead><tr><th>Action</th><th>Duration</th><th>FPS</th><th>Pause</th></tr></thead>
-                  <tbody id="syncCamBody"></tbody>
-                </table>
-                <div class="proto-empty" id="syncCamEmpty">No steps</div>
+              <div class="btn-row">
+                <button class="btn green btn-sm" onclick="scopeShutterOpen()">Open</button>
+                <button class="btn red btn-sm" onclick="scopeShutterClose()">Close</button>
               </div>
+            </div>
+          </div>
+
+          <!-- Halogen Lamp -->
+          <div class="card">
+            <div class="card-head"><span class="title">Halogen Lamp</span>
+              <span class="badge" id="scopeLampBadge">-</span></div>
+            <div class="section">
+              <div class="btn-row">
+                <button class="btn green btn-sm" onclick="scopeLampOn()">On</button>
+                <button class="btn red btn-sm" onclick="scopeLampOff()">Off</button>
+              </div>
+              <div class="field" style="margin-top:8px">
+                <label>Intensity</label>
+                <input type="range" id="scopeLampSlider" min="0" max="24" value="0"
+                       oninput="document.getElementById('scopeLampVal').textContent=this.value"
+                       onchange="scopeLampSetIntensity(this.value)"
+                       style="flex:1;accent-color:var(--amber)">
+                <span id="scopeLampVal" style="min-width:28px;text-align:right;font-size:12px">0</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Objective -->
+          <div class="card">
+            <div class="card-head"><span class="title">Objective</span>
+              <span id="scopeNosepieceCur" style="font-size:11px;color:var(--text3)"></span></div>
+            <div class="section">
               <div class="field">
-                <select id="scAction" onchange="onScActionChange()">
-                  <option value="Capture">Capture</option>
-                  <option value="Image">Image</option>
-                  <option value="Pause">Pause</option>
+                <select id="scopeNosepiece">
+                  <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+                  <option value="4">4</option><option value="5">5</option><option value="6">6</option>
                 </select>
-                <span id="scCaptureFields">
-                  <input type="number" id="scDur" value="10" min="1" style="width:50px">
-                  <span style="color:var(--text3);font-size:11px">sec</span>
-                  <input type="number" id="scFps" value="10" min="1" max="100" style="width:50px">
-                  <span style="color:var(--text3);font-size:11px">fps</span>
-                </span>
+                <button class="btn btn-sm" onclick="scopeSetNosepiece()">Set</button>
               </div>
-              <div class="field" id="scPauseRow">
-                <label>Pause</label>
-                <div class="time-group">
-                  <input type="number" id="scHH" value="0" min="0" max="99">
-                  <span class="sep">:</span>
-                  <input type="number" id="scMM" value="0" min="0" max="59">
-                  <span class="sep">:</span>
-                  <input type="number" id="scSS" value="0" min="0" max="59">
-                </div>
-              </div>
-              <div class="btn-row">
-                <button class="btn btn-sm" onclick="syncCamAdd()">Add</button>
-                <button class="btn btn-sm" onclick="syncCamRemove()">Remove</button>
-                <button class="btn btn-sm" onclick="syncCamClear()">Clear</button>
-              </div>
-              <div class="proto-status" id="syncCamStatus"></div>
             </div>
           </div>
 
-        </div><!-- .dual-proto -->
+          <!-- Filter -->
+          <div class="card">
+            <div class="card-head"><span class="title">Filter Block</span>
+              <span id="scopeFilterCur" style="font-size:11px;color:var(--text3)"></span></div>
+            <div class="section">
+              <div class="field">
+                <select id="scopeFilter">
+                  <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+                  <option value="4">4</option><option value="5">5</option><option value="6">6</option>
+                </select>
+                <button class="btn btn-sm" onclick="scopeSetFilter()">Set</button>
+              </div>
+            </div>
+          </div>
 
-        <!-- run / stop -->
-        <div class="exp-controls" style="margin-top:16px">
-          <button class="btn green" id="syncRunBtn" onclick="syncRunBoth()">Run Both Protocols</button>
-          <button class="btn red"   id="syncStopBtn" onclick="syncStopAll()" disabled>Stop All</button>
+          <!-- Light Path -->
+          <div class="card">
+            <div class="card-head"><span class="title">Light Path</span></div>
+            <div class="section">
+              <div class="field">
+                <select id="scopeLightPath">
+                  <option value="1">1 — Eye</option>
+                  <option value="2">2 — L-cam</option>
+                  <option value="3">3 — R-cam</option>
+                </select>
+                <button class="btn btn-sm" onclick="scopeSetLightPath()">Set</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Focus Z -->
+          <div class="card">
+            <div class="card-head"><span class="title">Focus (Z)</span></div>
+            <div class="section">
+              <div class="field">
+                <span id="scopeZPos" style="font-size:12px;color:var(--text2);min-width:90px">-</span>
+                <button class="btn btn-sm" onclick="scopeZRefresh()">&#8635;</button>
+              </div>
+              <div class="field">
+                <label>Step</label>
+                <select id="scopeZStep">
+                  <option value="100">100 nm</option>
+                  <option value="500">500 nm</option>
+                  <option value="1000" selected>1 &micro;m</option>
+                  <option value="5000">5 &micro;m</option>
+                  <option value="10000">10 &micro;m</option>
+                  <option value="50000">50 &micro;m</option>
+                </select>
+              </div>
+              <div class="btn-row">
+                <button class="btn btn-sm" onclick="scopeZMove(-1)" style="font-size:16px;padding:2px 12px">&#9660;</button>
+                <button class="btn btn-sm" onclick="scopeZMove(1)" style="font-size:16px;padding:2px 12px">&#9650;</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- XY Stage -->
+          <div class="card">
+            <div class="card-head"><span class="title">XY Stage</span></div>
+            <div class="section">
+              <div class="field">
+                <span id="scopeXYPos" style="font-size:11px;color:var(--text2)">X: - &nbsp; Y: -</span>
+                <button class="btn btn-sm" onclick="scopeXYRefresh()">&#8635;</button>
+              </div>
+              <div class="field">
+                <label>Step</label>
+                <select id="scopeXYStep">
+                  <option value="1000">1 &micro;m</option>
+                  <option value="5000">5 &micro;m</option>
+                  <option value="10000" selected>10 &micro;m</option>
+                  <option value="50000">50 &micro;m</option>
+                  <option value="100000">100 &micro;m</option>
+                  <option value="1000000">1 mm</option>
+                </select>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(3,36px);gap:3px;justify-content:center;margin-top:4px">
+                <div></div>
+                <button class="btn btn-sm" onclick="scopeXYMove(0,-1)" style="font-size:14px;padding:2px">&#9650;</button>
+                <div></div>
+                <button class="btn btn-sm" onclick="scopeXYMove(-1,0)" style="font-size:14px;padding:2px">&#9664;</button>
+                <div></div>
+                <button class="btn btn-sm" onclick="scopeXYMove(1,0)" style="font-size:14px;padding:2px">&#9654;</button>
+                <div></div>
+                <button class="btn btn-sm" onclick="scopeXYMove(0,1)" style="font-size:14px;padding:2px">&#9660;</button>
+                <div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Microscope Presets -->
+          <div class="card" style="grid-column:1/-1">
+            <div class="card-head"><span class="title">Microscope Presets</span></div>
+            <div class="section">
+              <div class="field">
+                <input type="text" id="msPresetName" placeholder="Preset name" style="flex:1;min-width:120px">
+                <button class="btn btn-sm accent" onclick="msSavePreset()">Save Current</button>
+              </div>
+              <div class="preset-list" id="msPresetList"></div>
+            </div>
+          </div>
+
         </div>
       </section>
 
-      <!-- ────────── LOG PANEL ────────── -->
+      <!-- ════════ CAMERA SETUP ════════ -->
+      <section id="panel-cam-setup" class="panel">
+        <div class="panel-title">Camera Setup</div>
+        <div class="cam-setup-grid">
+
+          <!-- CoolSNAP Connection -->
+          <div class="card">
+            <div class="card-head"><span class="title">CoolSNAP EZ</span>
+              <span class="badge" id="scopeCamBadge">Offline</span></div>
+            <div class="section">
+              <div class="btn-row">
+                <button class="btn green btn-sm" id="scopeCamConn" onclick="scopeCamConnect()">Connect</button>
+                <button class="btn red btn-sm" id="scopeCamDisc" onclick="scopeCamDisconnect()" disabled>Disconnect</button>
+              </div>
+              <div style="margin-top:8px;font-size:11px;color:var(--text3)" id="scopeCamInfo"></div>
+            </div>
+          </div>
+
+          <!-- Exposure -->
+          <div class="card">
+            <div class="card-head"><span class="title">Exposure</span></div>
+            <div class="section">
+              <div class="field">
+                <input type="number" id="scopeExposure" value="20" min="1" step="1" style="width:80px">
+                <span style="color:var(--text3);font-size:11px">ms</span>
+                <button class="btn btn-sm" onclick="scopeSetExposure()">Set</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Binning -->
+          <div class="card">
+            <div class="card-head"><span class="title">Binning</span></div>
+            <div class="section">
+              <div class="field">
+                <select id="scopeBinning">
+                  <option value="1">1x1</option>
+                  <option value="2">2x2</option>
+                  <option value="4">4x4</option>
+                  <option value="8">8x8</option>
+                </select>
+                <button class="btn btn-sm" onclick="scopeSetBinning()">Set</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Save Directory -->
+          <div class="card">
+            <div class="card-head"><span class="title">Save Directory</span></div>
+            <div class="section">
+              <div id="camSaveDir" style="font-size:11px;color:var(--text2);word-break:break-all;margin-bottom:6px">-</div>
+              <div class="field">
+                <input type="text" id="camSaveDirInput" placeholder="Path" style="flex:1">
+                <button class="btn btn-sm" onclick="camSetSaveDir()">Set</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Camera Presets -->
+          <div class="card" style="grid-column:1/-1">
+            <div class="card-head"><span class="title">Camera Presets</span></div>
+            <div class="section">
+              <div class="field">
+                <input type="text" id="camPresetName" placeholder="Preset name" style="flex:1;min-width:120px">
+                <button class="btn btn-sm accent" onclick="camSavePreset()">Save Current</button>
+              </div>
+              <div class="preset-list" id="camPresetList"></div>
+            </div>
+          </div>
+
+          <!-- Acquisition Presets -->
+          <div class="card" style="grid-column:1/-1">
+            <div class="card-head"><span class="title">Acquisition Presets</span>
+              <span style="font-size:10px;color:var(--text3)">Microscope + Camera combined</span></div>
+            <div class="section">
+              <div class="field">
+                <input type="text" id="acqPresetName" placeholder="Acquisition name" style="flex:1;min-width:100px">
+                <select id="acqMsPreset" style="min-width:100px"><option value="">Scope preset...</option></select>
+                <select id="acqCamPreset" style="min-width:100px"><option value="">Camera preset...</option></select>
+                <button class="btn btn-sm accent" onclick="acqSavePreset()">Create</button>
+              </div>
+              <div class="preset-list" id="acqPresetList"></div>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ════════ LIVE VIEW ════════ -->
+      <section id="panel-live" class="panel">
+        <div class="live-layout">
+          <div class="live-preview" id="livePreviewArea">
+            <img id="scopePreview" alt="preview">
+            <div class="live-placeholder" id="scopePlaceholder">
+              Connect camera and click <strong>Live</strong> or <strong>Snap</strong>
+            </div>
+            <div class="live-fps" id="scopeFps"></div>
+            <div class="live-overlay">
+              <button class="btn btn-sm blue" onclick="scopeSnap()">Snap</button>
+              <button class="btn btn-sm" id="scopeLiveBtn" onclick="scopeToggleLive()">Live</button>
+              <button class="btn btn-sm" onclick="scopeSnapSave()">Save</button>
+            </div>
+          </div>
+          <div class="live-quick">
+            <button class="btn btn-sm" id="liveShutterBtn" onclick="liveToggleShutter()">Shutter: -</button>
+            <button class="btn btn-sm" id="liveLampBtn" onclick="liveToggleLamp()">Lamp: -</button>
+            <label style="font-size:11px;color:var(--text3);margin-left:8px">Exp:</label>
+            <input type="number" id="liveExposure" value="20" min="1" style="width:60px"
+                   onchange="scopeSetExposureFrom(this.value)">
+            <span style="font-size:11px;color:var(--text3)">ms</span>
+            <div style="flex:1"></div>
+            <div class="proto-status" id="scopeCamStatus"></div>
+          </div>
+          <div class="filmstrip" id="liveFilmstrip">
+            <div style="color:var(--text3);font-size:11px;padding:4px">No captures yet</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ════════ TIMELINE ════════ -->
+      <section id="panel-timeline" class="panel">
+        <div class="panel-title">Acquisition Timeline</div>
+        <div class="tl-layout">
+
+          <!-- Toolbar -->
+          <div class="tl-toolbar">
+            <button class="btn accent btn-sm" onclick="tlAddEvent('video')">+ Video</button>
+            <button class="btn btn-sm" style="background:#8b5cf6;border-color:#8b5cf6;color:#fff" onclick="tlAddEvent('stack')">+ Stack</button>
+            <button class="btn green btn-sm" onclick="tlAddEvent('timelapse')">+ Timelapse</button>
+            <button class="btn btn-sm" style="background:#f59e0b;border-color:#f59e0b;color:#fff" onclick="tlAddPumpEvent()">+ Pump</button>
+            <div class="sep"></div>
+            <button class="btn btn-sm" onclick="tlAddPumpLane()">+ Pump Lane</button>
+            <div class="sep"></div>
+            <button class="btn green btn-sm" id="tlPlayBtn" onclick="tlPlay()">&#9654; Play</button>
+            <button class="btn btn-sm" id="tlPauseBtn" onclick="tlPause()" disabled>&#10074;&#10074; Pause</button>
+            <button class="btn red btn-sm" id="tlStopBtn" onclick="tlStop()" disabled>&#9632; Stop</button>
+            <div class="sep"></div>
+            <label style="font-size:11px;font-weight:600;color:var(--text2)">Zoom</label>
+            <input type="range" id="tlZoom" min="5" max="200" value="40"
+                   style="width:100px;accent-color:var(--accent)" oninput="tlRender()">
+            <label style="font-size:11px;font-weight:600;color:var(--text2)">Duration</label>
+            <input type="number" id="tlDuration" value="60" min="1" step="1" style="width:60px"
+                   onchange="tlRender()">
+            <span style="font-size:11px;color:var(--text3)">sec</span>
+            <div class="tl-progress" id="tlProgress"></div>
+          </div>
+
+          <!-- Ruler -->
+          <div class="tl-ruler-wrap">
+            <div class="tl-ruler-scroll" id="tlScroll">
+              <div class="tl-ruler" id="tlRuler">
+                <div class="tl-ruler-axis"><canvas id="tlAxisCanvas" height="28"></canvas></div>
+                <div class="tl-lanes" id="tlLanes"></div>
+                <div class="tl-playhead" id="tlPlayhead" style="left:-10px"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Event Editor -->
+          <div class="tl-editor" id="tlEditor">
+            <div class="ed-title">
+              <span id="tlEdTitle">Select an event</span>
+              <button class="btn btn-sm red" onclick="tlDeleteSelected()" id="tlEdDelete" style="display:none">&times; Delete</button>
+            </div>
+            <div class="ed-grid">
+              <div class="ed-col">
+                <div class="field" style="margin:0">
+                  <label>Name</label>
+                  <input type="text" id="tlEdName" style="width:120px" oninput="tlEditorChanged()">
+                </div>
+                <div class="field" style="margin:0">
+                  <label>Start</label>
+                  <input type="number" id="tlEdStart" min="0" step="0.1" style="width:70px" oninput="tlEditorChanged()">
+                  <span style="font-size:11px;color:var(--text3)">sec</span>
+                </div>
+                <div class="field" style="margin:0">
+                  <label>Duration</label>
+                  <input type="number" id="tlEdDur" min="0.1" step="0.1" style="width:70px" oninput="tlEditorChanged()">
+                  <span style="font-size:11px;color:var(--text3)">sec</span>
+                </div>
+              </div>
+              <div class="ed-col" id="tlEdTypeSettings"></div>
+              <div class="ed-col" id="tlEdPresetCol">
+                <div class="field" style="margin:0">
+                  <label>Scope</label>
+                  <select id="tlEdMsPreset" onchange="tlEditorChanged()" style="min-width:100px">
+                    <option value="">None</option>
+                  </select>
+                </div>
+                <div class="field" style="margin:0">
+                  <label>Camera</label>
+                  <select id="tlEdCamPreset" onchange="tlEditorChanged()" style="min-width:100px">
+                    <option value="">None</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ════════ LOG ════════ -->
       <section id="panel-log" class="panel">
         <div class="panel-title">
           Activity Log
@@ -448,9 +733,9 @@ option { background:#1a1d24; }
         </div>
       </section>
 
-    </div><!-- .content -->
-  </div><!-- .app-body -->
-</div><!-- .app -->
+    </div>
+  </div>
+</div>
 
 <div id="toasts"></div>
 
@@ -464,13 +749,15 @@ let portList = [];
 let pumpState = Array.from({length:NUM_PUMPS}, ()=>({
   connected:false, protoRunning:false, steps:[], selectedRow:-1
 }));
-let camConnected = false;
-let liveInterval = null;
-let captures = [];
-let syncPumpSteps = [];
-let syncCamSteps  = [];
-let syncPumpSelRow = -1;
-let syncCamSelRow  = -1;
+
+let scopeCamConnected = false;
+let scopeTiConnected = false;
+let scopeCaptures = [];
+let scopeLiveActive = false;
+let _liveWs = null;
+let _fpsPoller = null;
+let _shutterOpen = false;
+let _lampOn = false;
 
 /* ═══════════════════════════════════════════════════════════════════════════
    UTILITIES
@@ -482,15 +769,12 @@ function toast(msg, type="info") {
   document.getElementById("toasts").appendChild(el);
   setTimeout(()=>{ el.style.opacity="0"; setTimeout(()=>el.remove(),300); },3500);
 }
-
 function pad2(n){ return String(Math.max(0,Math.floor(n))).padStart(2,"0"); }
-
 function hmsToSec(h,m,s){ return h*3600 + m*60 + s; }
 function secToHMS(sec){
   const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=Math.floor(sec%60);
   return pad2(h)+":"+pad2(m)+":"+pad2(s);
 }
-
 function now(){ return new Date().toLocaleTimeString("en-GB",{hour12:false}); }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -505,14 +789,14 @@ function switchPanel(name) {
 
 function updateIndicators() {
   for(let i=0;i<NUM_PUMPS;i++){
-    document.getElementById("indP"+i)
-      .classList.toggle("on", pumpState[i].connected);
+    document.getElementById("indP"+i).classList.toggle("on", pumpState[i].connected);
   }
-  document.getElementById("indCam").classList.toggle("on", camConnected);
+  document.getElementById("indCam").classList.toggle("on", scopeCamConnected);
+  document.getElementById("indScope").classList.toggle("on", scopeTiConnected);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   ACTIVITY LOG
+   LOG
    ═══════════════════════════════════════════════════════════════════════════ */
 function logMsg(msg, badge="sys") {
   const c = document.getElementById("logContainer");
@@ -524,93 +808,76 @@ function logMsg(msg, badge="sys") {
   c.appendChild(e);
   c.scrollTop = c.scrollHeight;
 }
-
 function clearLog() {
-  const c = document.getElementById("logContainer");
-  c.innerHTML = '<div class="log-empty" id="logEmpty">No activity yet</div>';
+  document.getElementById("logContainer").innerHTML =
+    '<div class="log-empty" id="logEmpty">No activity yet</div>';
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    PORTS
    ═══════════════════════════════════════════════════════════════════════════ */
 async function refreshPorts() {
-  let res = await eel.pump_get_ports()();
+  let res = await api('pump_get_ports');
   if(res.error){ toast(res.error,"error"); return; }
   portList = res;
   let names = res.map(p=>p.device);
   for(let i=0;i<NUM_PUMPS;i++){
     let sel = document.getElementById("port"+i);
+    if(!sel) continue;
     let cur = sel.value;
     sel.innerHTML = names.map(n=>`<option>${n}</option>`).join("");
     if(cur && names.includes(cur)) sel.value = cur;
   }
   toast("Ports refreshed ("+names.length+")","success");
-  logMsg("Serial ports refreshed: "+names.join(", "));
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   PUMPS
+   PUMPS (unchanged)
    ═══════════════════════════════════════════════════════════════════════════ */
 function buildPumps() {
   const grid = document.getElementById("pumpGrid");
   for(let i=0;i<NUM_PUMPS;i++) grid.innerHTML += pumpCardHTML(i);
 }
-
 function pumpCardHTML(i) {
   const dirs = ["INF","WDR"].map(d=>`<option>${d}</option>`).join("");
   const units = RATE_UNITS.map(u=>`<option>${u}</option>`).join("");
   return `
   <div class="card" id="pump${i}">
-    <div class="card-head">
-      <span class="title">Pump ${i+1}</span>
-      <span class="badge" id="pBadge${i}">Offline</span>
-    </div>
+    <div class="card-head"><span class="title">Pump ${i+1}</span>
+      <span class="badge" id="pBadge${i}">Offline</span></div>
     <div class="section">
       <div class="section-label">Connection</div>
-      <div class="field">
-        <label>Port</label><select id="port${i}" style="flex:1"></select>
-      </div>
-      <div class="field">
-        <label>Address</label>
-        <input type="number" id="addr${i}" value="${i}" min="0" max="9" style="width:50px">
-      </div>
+      <div class="field"><label>Port</label><select id="port${i}" style="flex:1"></select></div>
+      <div class="field"><label>Address</label>
+        <input type="number" id="addr${i}" value="${i}" min="0" max="9" style="width:50px"></div>
       <div class="btn-row">
         <button class="btn green btn-sm" id="pConn${i}" onclick="pumpConnect(${i})">Connect</button>
-        <button class="btn red btn-sm"   id="pDisc${i}" onclick="pumpDisconnect(${i})" disabled>Disconnect</button>
+        <button class="btn red btn-sm" id="pDisc${i}" onclick="pumpDisconnect(${i})" disabled>Disconnect</button>
       </div>
     </div>
     <div class="section">
       <div class="section-label">Syringe</div>
-      <div class="field">
-        <label>Diameter</label>
+      <div class="field"><label>Diameter</label>
         <input type="number" id="dia${i}" value="14.5" step="0.1">
-        <button class="btn btn-sm" onclick="pumpSetDia(${i})">Set</button>
-      </div>
-      <div class="field">
-        <label>Direction</label>
+        <button class="btn btn-sm" onclick="pumpSetDia(${i})">Set</button></div>
+      <div class="field"><label>Direction</label>
         <select id="dir${i}">${dirs}</select>
-        <button class="btn btn-sm" onclick="pumpSetDir(${i})">Set</button>
-      </div>
+        <button class="btn btn-sm" onclick="pumpSetDir(${i})">Set</button></div>
     </div>
     <div class="section">
       <div class="section-label">Manual Control</div>
-      <div class="field">
-        <label>Rate</label>
+      <div class="field"><label>Rate</label>
         <input type="number" id="rate${i}" value="5" step="0.1">
         <select id="rateU${i}">${units}</select>
-        <button class="btn btn-sm" onclick="pumpSetRate(${i})">Set</button>
-      </div>
-      <div class="field">
-        <label>Volume</label>
+        <button class="btn btn-sm" onclick="pumpSetRate(${i})">Set</button></div>
+      <div class="field"><label>Volume</label>
         <input type="number" id="vol${i}" value="1" step="0.1">
-        <button class="btn btn-sm" onclick="pumpSetVol(${i})">Set</button>
-      </div>
+        <button class="btn btn-sm" onclick="pumpSetVol(${i})">Set</button></div>
       <div class="btn-row">
         <button class="btn green btn-sm" onclick="pumpRun(${i})">Run</button>
-        <button class="btn red btn-sm"   onclick="pumpStop(${i})">Stop</button>
+        <button class="btn red btn-sm" onclick="pumpStop(${i})">Stop</button>
         <button class="btn btn-sm" onclick="pumpClrVol(${i})">Clr Vol</button>
         <button class="btn btn-sm" onclick="pumpClrTgt(${i})">Clr Tgt</button>
-        <button class="btn btn-sm" onclick="pumpStatus(${i})">Status</button>
       </div>
     </div>
     <div class="section">
@@ -627,8 +894,7 @@ function pumpCardHTML(i) {
         <input type="number" id="pRate${i}" placeholder="Rate" step="0.1" style="width:54px">
         <select id="pU${i}">${units}</select>
       </div>
-      <div class="field">
-        <label>Time</label>
+      <div class="field"><label>Time</label>
         <div class="time-group">
           <input type="number" id="pHH${i}" value="0" min="0" max="99">
           <span class="sep">:</span>
@@ -643,22 +909,17 @@ function pumpCardHTML(i) {
         <button class="btn accent btn-sm" id="protoRun${i}" onclick="protoRun(${i})">Run Proto</button>
         <button class="btn red btn-sm" id="protoStop${i}" onclick="protoStop(${i})" disabled>Stop Proto</button>
       </div>
-      <div class="btn-row">
-        <button class="btn btn-sm" onclick="protoSave(${i})">Save</button>
-        <button class="btn btn-sm" onclick="protoLoad(${i})">Load</button>
-      </div>
       <div class="proto-status" id="protoStat${i}"></div>
     </div>
   </div>`;
 }
 
-/* ── pump connection ──────────────── */
 async function pumpConnect(i) {
   const port = document.getElementById("port"+i).value;
   const addr = document.getElementById("addr"+i).value;
   if(!port){ toast("Select a port","error"); return; }
-  const res = await eel.pump_connect(i, port, parseInt(addr))();
-  if(res.error){ toast("P"+(i+1)+": "+res.error,"error"); logMsg("P"+(i+1)+" connect failed: "+res.error,"err"); return; }
+  const res = await api('pump_connect', i, port, parseInt(addr));
+  if(res.error){ toast("P"+(i+1)+": "+res.error,"error"); return; }
   pumpState[i].connected = true;
   document.getElementById("pump"+i).classList.add("connected");
   document.getElementById("pBadge"+i).className="badge on";
@@ -667,78 +928,57 @@ async function pumpConnect(i) {
   document.getElementById("pDisc"+i).disabled=false;
   updateIndicators();
   toast("P"+(i+1)+" connected","success");
-  logMsg("P"+(i+1)+" connected on "+port+" addr "+addr,"pump");
+  logMsg("P"+(i+1)+" connected on "+port,"pump");
 }
-
 async function pumpDisconnect(i) {
-  await eel.pump_disconnect(i)();
+  await api('pump_disconnect', i);
   pumpState[i].connected=false; pumpState[i].protoRunning=false;
   document.getElementById("pump"+i).classList.remove("connected");
   document.getElementById("pBadge"+i).className="badge";
   document.getElementById("pBadge"+i).textContent="Offline";
   document.getElementById("pConn"+i).disabled=false;
   document.getElementById("pDisc"+i).disabled=true;
-  document.getElementById("protoStat"+i).textContent="";
   updateIndicators();
   toast("P"+(i+1)+" disconnected");
-  logMsg("P"+(i+1)+" disconnected","pump");
 }
-
-/* ── pump settings ────────────────── */
 async function pumpSetDia(i) {
   const v=document.getElementById("dia"+i).value;
-  const r=await eel.pump_set_diameter(i,parseFloat(v))();
+  const r=await api('pump_set_diameter', i, parseFloat(v));
   if(r.error) toast("P"+(i+1)+": "+r.error,"error");
-  else { toast("P"+(i+1)+": diameter set","success"); logMsg("P"+(i+1)+" diameter="+v+"mm","pump"); }
+  else toast("P"+(i+1)+": diameter set","success");
 }
 async function pumpSetDir(i) {
   const v=document.getElementById("dir"+i).value;
-  const r=await eel.pump_set_direction(i,v)();
+  const r=await api('pump_set_direction', i, v);
   if(r.error) toast("P"+(i+1)+": "+r.error,"error");
-  else { toast("P"+(i+1)+": direction="+v,"success"); logMsg("P"+(i+1)+" direction="+v,"pump"); }
+  else toast("P"+(i+1)+": direction="+v,"success");
 }
-
-/* ── pump manual controls ─────────── */
 async function pumpSetRate(i) {
   const rate=document.getElementById("rate"+i).value;
   const u=document.getElementById("rateU"+i).value;
-  const r=await eel.pump_set_rate(i,parseFloat(rate),u)();
+  const r=await api('pump_set_rate', i, parseFloat(rate), u);
   if(r.error) toast("P"+(i+1)+": "+r.error,"error");
-  else { toast("P"+(i+1)+": rate set","success"); logMsg("P"+(i+1)+" rate="+rate+" "+u,"pump"); }
+  else toast("P"+(i+1)+": rate set","success");
 }
 async function pumpSetVol(i) {
   const v=document.getElementById("vol"+i).value;
-  const r=await eel.pump_set_volume(i,parseFloat(v))();
+  const r=await api('pump_set_volume', i, parseFloat(v));
   if(r.error) toast("P"+(i+1)+": "+r.error,"error");
-  else { toast("P"+(i+1)+": volume set","success"); logMsg("P"+(i+1)+" volume="+v+"mL","pump"); }
+  else toast("P"+(i+1)+": volume set","success");
 }
 async function pumpRun(i) {
-  const r=await eel.pump_run(i)();
+  const r=await api('pump_run', i);
   if(r.error) toast("P"+(i+1)+": "+r.error,"error");
-  else { toast("P"+(i+1)+": running","success"); logMsg("P"+(i+1)+" RUN","pump"); }
+  else toast("P"+(i+1)+": running","success");
 }
 async function pumpStop(i) {
-  const r=await eel.pump_stop(i)();
+  const r=await api('pump_stop', i);
   if(r.error) toast("P"+(i+1)+": "+r.error,"error");
-  else { toast("P"+(i+1)+": stopped"); logMsg("P"+(i+1)+" STOP","pump"); }
+  else toast("P"+(i+1)+": stopped");
 }
-async function pumpClrVol(i) {
-  const r=await eel.pump_clear_volume(i)();
-  if(r.error) toast("P"+(i+1)+": "+r.error,"error");
-  else toast("P"+(i+1)+": vol cleared","success");
-}
-async function pumpClrTgt(i) {
-  const r=await eel.pump_clear_target(i)();
-  if(r.error) toast("P"+(i+1)+": "+r.error,"error");
-  else toast("P"+(i+1)+": target cleared","success");
-}
-async function pumpStatus(i) {
-  const r=await eel.pump_get_status(i)();
-  if(r.error) toast("P"+(i+1)+": "+r.error,"error");
-  else toast("P"+(i+1)+": "+r.status);
-}
+async function pumpClrVol(i) { await api('pump_clear_volume', i); }
+async function pumpClrTgt(i) { await api('pump_clear_target', i); }
 
-/* ── pump protocol ────────────────── */
 function protoRender(i) {
   const tbody=document.getElementById("protoBody"+i);
   const empty=document.getElementById("protoEmpty"+i);
@@ -752,10 +992,7 @@ function protoRender(i) {
       <td>${s.rate}</td><td>${s.units}</td><td>${s.time}</td></tr>`;
   });
 }
-function protoSelect(i,j){
-  pumpState[i].selectedRow = pumpState[i].selectedRow===j ? -1 : j;
-  protoRender(i);
-}
+function protoSelect(i,j){ pumpState[i].selectedRow = pumpState[i].selectedRow===j ? -1 : j; protoRender(i); }
 function protoAdd(i) {
   const action=document.getElementById("pAct"+i).value;
   let rate=document.getElementById("pRate"+i).value||"";
@@ -772,373 +1009,1072 @@ function protoAdd(i) {
 function protoRemove(i) {
   const s=pumpState[i].selectedRow;
   if(s<0||s>=pumpState[i].steps.length) return;
-  pumpState[i].steps.splice(s,1);
-  pumpState[i].selectedRow=-1;
-  protoRender(i);
+  pumpState[i].steps.splice(s,1); pumpState[i].selectedRow=-1; protoRender(i);
 }
 async function protoRun(i) {
   if(!pumpState[i].connected){ toast("Connect pump first","error"); return; }
   if(!pumpState[i].steps.length){ toast("Protocol empty","error"); return; }
-  const r=await eel.pump_run_protocol(i,pumpState[i].steps)();
+  const r=await api('pump_run_protocol', i, pumpState[i].steps);
   if(r.error){ toast("P"+(i+1)+": "+r.error,"error"); return; }
   pumpState[i].protoRunning=true;
   document.getElementById("protoRun"+i).disabled=true;
   document.getElementById("protoStop"+i).disabled=false;
-  logMsg("P"+(i+1)+" protocol started","pump");
 }
 async function protoStop(i) {
-  await eel.pump_stop_protocol(i)();
+  await api('pump_stop_protocol', i);
   pumpState[i].protoRunning=false;
   document.getElementById("protoRun"+i).disabled=false;
   document.getElementById("protoStop"+i).disabled=true;
-  logMsg("P"+(i+1)+" protocol stopped","pump");
-}
-function protoSave(i) {
-  if(!pumpState[i].steps.length){ toast("Nothing to save","error"); return; }
-  const blob=new Blob([JSON.stringify(pumpState[i].steps,null,2)],{type:"application/json"});
-  const a=document.createElement("a");
-  a.href=URL.createObjectURL(blob); a.download="pump"+(i+1)+"_protocol.json"; a.click();
-  toast("Protocol saved","success");
-}
-function protoLoad(i) {
-  const inp=document.createElement("input"); inp.type="file"; inp.accept=".json";
-  inp.onchange=function(){
-    const rd=new FileReader();
-    rd.onload=function(e){
-      try{ pumpState[i].steps=JSON.parse(e.target.result);
-           pumpState[i].selectedRow=-1; protoRender(i);
-           toast("Protocol loaded","success"); }
-      catch(er){ toast("Invalid JSON","error"); }
-    }; rd.readAsText(inp.files[0]);
-  }; inp.click();
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   CAMERA
-   ═══════════════════════════════════════════════════════════════════════════ */
-async function cameraConnect() {
-  const r=await eel.camera_connect()();
-  if(r.error){ toast("Camera: "+r.error,"error"); logMsg("Camera connect failed: "+r.error,"err"); return; }
-  camConnected=true;
-  document.getElementById("camBadge").className="badge on";
-  document.getElementById("camBadge").textContent="Online";
-  document.getElementById("camConnBtn").disabled=true;
-  document.getElementById("camDiscBtn").disabled=false;
-  updateIndicators();
-  toast("Camera connected","success");
-  logMsg("Camera connected to Micro-Manager","camera");
-}
-
-async function cameraDisconnect() {
-  await eel.camera_disconnect()();
-  camConnected=false;
-  stopLive();
-  document.getElementById("camBadge").className="badge";
-  document.getElementById("camBadge").textContent="Offline";
-  document.getElementById("camConnBtn").disabled=false;
-  document.getElementById("camDiscBtn").disabled=true;
-  updateIndicators();
-  toast("Camera disconnected");
-  logMsg("Camera disconnected","camera");
-}
-
-async function cameraSnap() {
-  const r=await eel.camera_snap()();
-  if(r.error){ toast("Snap: "+r.error,"error"); return; }
-  showPreview(r.image);
-}
-
-function showPreview(b64) {
-  const img=document.getElementById("camPreview");
-  img.src="data:image/png;base64,"+b64;
-  img.style.display="block";
-  document.getElementById("previewPlaceholder").style.display="none";
-}
-
-function toggleLive() {
-  if(liveInterval){ stopLive(); return; }
-  if(!camConnected){ toast("Connect camera first","error"); return; }
-  document.getElementById("liveBtn").classList.add("green");
-  document.getElementById("liveBtn").textContent="Stop Live";
-  liveInterval = setInterval(async ()=>{
-    const r=await eel.camera_snap()();
-    if(r.ok) showPreview(r.image);
-  }, 2000);
-  logMsg("Live preview started","camera");
-}
-function stopLive() {
-  if(liveInterval){ clearInterval(liveInterval); liveInterval=null; }
-  document.getElementById("liveBtn").classList.remove("green");
-  document.getElementById("liveBtn").textContent="Live";
-}
-
-async function cameraCapture() {
-  const dur=parseInt(document.getElementById("capDuration").value)||10;
-  const fps=parseInt(document.getElementById("capFps").value)||10;
-  const r=await eel.camera_capture_video(dur,fps)();
-  if(r.error){ toast("Capture: "+r.error,"error"); return; }
-  toast(r.msg,"success");
-  logMsg("Recording "+dur+"s video @ "+fps+" fps","camera");
-}
-
-function addCapture(name) {
-  captures.unshift(name);
-  const c=document.getElementById("recentCaptures");
-  c.innerHTML = captures.map(n=>`<div style="padding:3px 0;font-size:11px;color:var(--text2)">${n}</div>`).join("");
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   SYNC — DUAL PROTOCOL EDITOR
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-/* ── pump protocol table ──────────── */
-function syncRenderPump() {
-  const tbody=document.getElementById("syncPumpBody");
-  const empty=document.getElementById("syncPumpEmpty");
-  tbody.innerHTML="";
-  if(!syncPumpSteps.length){ empty.style.display=""; return; }
-  empty.style.display="none";
-  syncPumpSteps.forEach((s,j)=>{
-    const cls=j===syncPumpSelRow?"selected":"";
-    tbody.innerHTML+=`<tr class="${cls}" onclick="syncPumpSelect(${j})">
-      <td><span class="tag ${s.action==='Run'?'tag-run':'tag-stop'}">${s.action}</span></td>
-      <td>${s.rate||""}</td><td>${s.units||""}</td><td>${s.time}</td></tr>`;
-  });
-}
-function syncPumpSelect(j){
-  syncPumpSelRow = syncPumpSelRow===j ? -1 : j;
-  syncRenderPump();
-}
-function syncPumpAdd() {
-  const action=document.getElementById("spAction").value;
-  let rate=document.getElementById("spRate").value||"";
-  let units=document.getElementById("spUnits").value;
-  const hh=parseInt(document.getElementById("spHH").value)||0;
-  const mm=parseInt(document.getElementById("spMM").value)||0;
-  const ss=parseInt(document.getElementById("spSS").value)||0;
-  const timeStr=pad2(hh)+":"+pad2(mm)+":"+pad2(ss);
-  if(action==="Run" && !rate){ toast("Enter a rate for Run","error"); return; }
-  if(action!=="Run"){ rate=""; units=""; }
-  syncPumpSteps.push({action,rate,units,time:timeStr});
-  syncRenderPump();
-}
-function syncPumpRemove() {
-  if(syncPumpSelRow<0||syncPumpSelRow>=syncPumpSteps.length) return;
-  syncPumpSteps.splice(syncPumpSelRow,1);
-  syncPumpSelRow=-1;
-  syncRenderPump();
-}
-function syncPumpClear(){ syncPumpSteps=[]; syncPumpSelRow=-1; syncRenderPump(); }
-
-/* ── camera protocol table ────────── */
-function syncRenderCam() {
-  const tbody=document.getElementById("syncCamBody");
-  const empty=document.getElementById("syncCamEmpty");
-  tbody.innerHTML="";
-  if(!syncCamSteps.length){ empty.style.display=""; return; }
-  empty.style.display="none";
-  syncCamSteps.forEach((s,j)=>{
-    const cls=j===syncCamSelRow?"selected":"";
-    const tagCls = s.action==="Capture"?"tag-run": s.action==="Image"?"tag-img":"tag-stop";
-    tbody.innerHTML+=`<tr class="${cls}" onclick="syncCamSelect(${j})">
-      <td><span class="tag ${tagCls}">${s.action}</span></td>
-      <td>${s.action==="Capture" ? s.duration_sec+"s" : ""}</td>
-      <td>${s.action==="Capture" ? s.fps : ""}</td>
-      <td>${s.action==="Pause" ? s.time : ""}</td></tr>`;
-  });
-}
-function syncCamSelect(j){
-  syncCamSelRow = syncCamSelRow===j ? -1 : j;
-  syncRenderCam();
-}
-function onScActionChange() {
-  const v = document.getElementById("scAction").value;
-  document.getElementById("scCaptureFields").style.display = v==="Capture"?"":"none";
-  document.getElementById("scPauseRow").style.display = v==="Pause"?"":"none";
-}
-function syncCamAdd() {
-  const action=document.getElementById("scAction").value;
-  if(action==="Capture") {
-    const dur=parseInt(document.getElementById("scDur").value)||10;
-    const fps=parseInt(document.getElementById("scFps").value)||10;
-    syncCamSteps.push({action:"Capture", duration_sec:dur, fps:fps});
-  } else if(action==="Image") {
-    syncCamSteps.push({action:"Image"});
-  } else {
-    const hh=parseInt(document.getElementById("scHH").value)||0;
-    const mm=parseInt(document.getElementById("scMM").value)||0;
-    const ss=parseInt(document.getElementById("scSS").value)||0;
-    const timeStr=pad2(hh)+":"+pad2(mm)+":"+pad2(ss);
-    if(hmsToSec(hh,mm,ss)===0){ toast("Set a pause duration","error"); return; }
-    syncCamSteps.push({action:"Pause", time:timeStr});
-  }
-  syncRenderCam();
-}
-function syncCamRemove() {
-  if(syncCamSelRow<0||syncCamSelRow>=syncCamSteps.length) return;
-  syncCamSteps.splice(syncCamSelRow,1);
-  syncCamSelRow=-1;
-  syncRenderCam();
-}
-function syncCamClear(){ syncCamSteps=[]; syncCamSelRow=-1; syncRenderCam(); }
-
-/* ── run both / stop all ──────────── */
-async function syncRunBoth() {
-  const pIdx = parseInt(document.getElementById("syncPumpSel").value);
-  let pumpOk=false, camOk=false;
-
-  if(syncPumpSteps.length) {
-    if(!pumpState[pIdx].connected){ toast("Pump "+(pIdx+1)+" not connected","error"); return; }
-    const r = await eel.pump_run_protocol(pIdx, syncPumpSteps)();
-    if(r.error){ toast("Pump: "+r.error,"error"); return; }
-    pumpOk=true;
-    logMsg("Pump "+(pIdx+1)+" protocol started ("+syncPumpSteps.length+" steps)","pump");
-  }
-
-  if(syncCamSteps.length) {
-    if(!camConnected){ toast("Camera not connected","error"); return; }
-    const r = await eel.camera_run_protocol(syncCamSteps)();
-    if(r.error){ toast("Camera: "+r.error,"error"); return; }
-    camOk=true;
-    logMsg("Camera protocol started ("+syncCamSteps.length+" steps)","camera");
-  }
-
-  if(!pumpOk && !camOk){ toast("Add steps to at least one protocol","error"); return; }
-  document.getElementById("syncRunBtn").disabled=true;
-  document.getElementById("syncStopBtn").disabled=false;
-}
-
-async function syncStopAll() {
-  await eel.experiment_stop_all()();
-  document.getElementById("syncRunBtn").disabled=false;
-  document.getElementById("syncStopBtn").disabled=true;
-  logMsg("All protocols stopped","exp");
-}
-
-/* ── save / load ──────────────────── */
-async function syncSave() {
-  const name=document.getElementById("expName").value.trim();
-  if(!name){ toast("Enter an experiment name","error"); return; }
-  const pIdx = parseInt(document.getElementById("syncPumpSel").value);
-  const payload = { pump_idx:pIdx, pump_steps:syncPumpSteps, camera_steps:syncCamSteps };
-  const r=await eel.experiment_save(name, payload)();
-  if(r.error){ toast(r.error,"error"); return; }
-  toast("Experiment saved","success");
-  logMsg("Experiment '"+name+"' saved","exp");
-  refreshExpList();
-}
-
-async function syncLoadExp() {
-  const sel=document.getElementById("expLoadSelect");
-  const name=sel.value;
-  if(!name){ toast("Select an experiment","error"); return; }
-  const r=await eel.experiment_load(name)();
-  if(r.error){ toast(r.error,"error"); return; }
-  const p = r.data.payload || {};
-  document.getElementById("expName").value = r.data.name||name;
-  document.getElementById("syncPumpSel").value = p.pump_idx||0;
-  syncPumpSteps = p.pump_steps||[];
-  syncCamSteps  = p.camera_steps||[];
-  syncPumpSelRow=-1; syncCamSelRow=-1;
-  syncRenderPump();
-  syncRenderCam();
-  toast("Experiment loaded","success");
-  logMsg("Experiment '"+name+"' loaded","exp");
-}
-
-async function refreshExpList() {
-  const list = await eel.experiment_list_saved()();
-  const sel=document.getElementById("expLoadSelect");
-  sel.innerHTML='<option value="">Load ...</option>';
-  (list||[]).forEach(n=>{ sel.innerHTML+=`<option value="${n}">${n}</option>`; });
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   EEL CALLBACKS
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-/* ── pump protocol callbacks ──────── */
-eel.expose(onPumpProtocolUpdate);
-function onPumpProtocolUpdate(idx, step, status, msg) {
+/* pump event handlers */
+onEvent("onPumpProtocolUpdate", function(idx, step, status, msg) {
   document.getElementById("protoStat"+idx).textContent=msg;
-  const syncIdx = parseInt(document.getElementById("syncPumpSel").value);
-  if(idx===syncIdx) document.getElementById("syncPumpStatus").textContent=msg;
   if(status==="complete"||status==="aborted"||status==="error") {
     pumpState[idx].protoRunning=false;
     document.getElementById("protoRun"+idx).disabled=false;
     document.getElementById("protoStop"+idx).disabled=true;
-    highlightProtoStep(idx,-1);
-    toast("P"+(idx+1)+": "+msg, status==="error"?"error":"success");
-    logMsg("P"+(idx+1)+" protocol "+status,"pump");
-    _checkSyncDone();
-  } else { highlightProtoStep(idx,step); }
+  }
+});
+onEvent("onPumpProtocolCountdown", function(idx, step, remaining) {
+  document.getElementById("protoStat"+idx).textContent="Step "+(step+1)+" \u2014 "+remaining;
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SCOPE: NIKON TI
+   ═══════════════════════════════════════════════════════════════════════════ */
+async function scopeTiConnect() {
+  const r = await api('ti_connect');
+  if(r.error){ toast("Ti: "+r.error,"error"); return; }
+  scopeTiConnected = true;
+  document.getElementById("scopeTiBadge").className="badge on";
+  document.getElementById("scopeTiBadge").textContent="Online";
+  document.getElementById("scopeTiConn").disabled=true;
+  document.getElementById("scopeTiDisc").disabled=false;
+  updateIndicators();
+  toast("Nikon Ti connected","success");
+  logMsg("Nikon Ti connected","sys");
+  scopeRefreshTi();
+}
+async function scopeTiDisconnect() {
+  await api('ti_disconnect');
+  scopeTiConnected = false;
+  document.getElementById("scopeTiBadge").className="badge";
+  document.getElementById("scopeTiBadge").textContent="Offline";
+  document.getElementById("scopeTiConn").disabled=false;
+  document.getElementById("scopeTiDisc").disabled=true;
+  updateIndicators();
 }
 
-eel.expose(onPumpProtocolCountdown);
-function onPumpProtocolCountdown(idx, step, remaining) {
-  document.getElementById("protoStat"+idx).textContent=
-    "Step "+(step+1)+" \u2014 "+remaining+" remaining";
-  const syncIdx = parseInt(document.getElementById("syncPumpSel").value);
-  if(idx===syncIdx)
-    document.getElementById("syncPumpStatus").textContent=
-      "Step "+(step+1)+" \u2014 "+remaining;
-  highlightProtoStep(idx,step);
+async function scopeShutterOpen() {
+  if(!scopeTiConnected){ toast("Connect Ti first","error"); return; }
+  const r = await api('ti_shutter_open');
+  if(r.error) toast(r.error,"error");
+  else { _shutterOpen=true; updateShutterBadge(); }
+}
+async function scopeShutterClose() {
+  if(!scopeTiConnected){ toast("Connect Ti first","error"); return; }
+  const r = await api('ti_shutter_close');
+  if(r.error) toast(r.error,"error");
+  else { _shutterOpen=false; updateShutterBadge(); }
+}
+function updateShutterBadge() {
+  document.getElementById("scopeShutterBadge").className = _shutterOpen ? "badge on" : "badge";
+  document.getElementById("scopeShutterBadge").textContent = _shutterOpen ? "Open" : "Closed";
+  document.getElementById("liveShutterBtn").textContent = "Shutter: " + (_shutterOpen ? "Open" : "Closed");
 }
 
-function highlightProtoStep(idx, stepIdx) {
-  const rows=document.getElementById("protoBody"+idx).children;
-  for(let r=0;r<rows.length;r++) rows[r].classList.toggle("active",r===stepIdx);
+async function scopeLampOn() {
+  if(!scopeTiConnected){ toast("Connect Ti first","error"); return; }
+  const r = await api('ti_dia_lamp_on');
+  if(!r.error){ _lampOn=true; updateLampBadge(); }
+}
+async function scopeLampOff() {
+  if(!scopeTiConnected){ toast("Connect Ti first","error"); return; }
+  const r = await api('ti_dia_lamp_off');
+  if(!r.error){ _lampOn=false; updateLampBadge(); }
+}
+function updateLampBadge() {
+  document.getElementById("scopeLampBadge").className = _lampOn ? "badge on" : "badge";
+  document.getElementById("scopeLampBadge").textContent = _lampOn ? "On" : "Off";
+  document.getElementById("liveLampBtn").textContent = "Lamp: " + (_lampOn ? "On" : "Off");
+}
+async function scopeLampSetIntensity(v) {
+  if(!scopeTiConnected) return;
+  await api('ti_dia_lamp_set_intensity', parseInt(v));
 }
 
-/* ── camera callbacks ─────────────── */
-eel.expose(onCameraStatus);
-function onCameraStatus(status, msg) {
-  document.getElementById("camStatus").textContent=msg;
-  logMsg("Camera: "+msg,"camera");
+async function scopeSetNosepiece() {
+  if(!scopeTiConnected){ toast("Connect Ti first","error"); return; }
+  const v = parseInt(document.getElementById("scopeNosepiece").value);
+  const r = await api('ti_nosepiece_set', v);
+  if(!r.error) scopeRefreshOptics();
 }
-
-eel.expose(onCameraCaptureComplete);
-function onCameraCaptureComplete(filename) {
-  addCapture(filename);
-  logMsg("Video saved: "+filename,"camera");
+async function scopeSetFilter() {
+  if(!scopeTiConnected){ toast("Connect Ti first","error"); return; }
+  const v = parseInt(document.getElementById("scopeFilter").value);
+  const r = await api('ti_filter_set', v);
+  if(!r.error) scopeRefreshOptics();
 }
-
-/* ── camera protocol callbacks ────── */
-eel.expose(onCameraProtocolUpdate);
-function onCameraProtocolUpdate(step, status, msg) {
-  document.getElementById("syncCamStatus").textContent=msg;
-  if(status==="complete"||status==="aborted"||status==="error") {
-    logMsg(msg,"camera");
-    _checkSyncDone();
+async function scopeSetLightPath() {
+  if(!scopeTiConnected){ toast("Connect Ti first","error"); return; }
+  const v = parseInt(document.getElementById("scopeLightPath").value);
+  await api('ti_light_path_set', v);
+}
+async function scopeRefreshOptics() {
+  const n = await api('ti_nosepiece_get');
+  if(n.ok) {
+    document.getElementById("scopeNosepiece").value = n.value;
+    document.getElementById("scopeNosepieceCur").textContent = "pos "+n.value;
+  }
+  const f = await api('ti_filter_get');
+  if(f.ok) {
+    document.getElementById("scopeFilter").value = f.value;
+    document.getElementById("scopeFilterCur").textContent = "pos "+f.value;
+  }
+}
+async function scopeZRefresh() {
+  if(!scopeTiConnected) return;
+  const r = await api('ti_z_get');
+  if(r.ok) document.getElementById("scopeZPos").textContent = (r.value/1000).toFixed(1)+" \u00b5m";
+}
+async function scopeZMove(dir) {
+  if(!scopeTiConnected){ toast("Connect Ti first","error"); return; }
+  const step = parseInt(document.getElementById("scopeZStep").value)||1000;
+  await api('ti_z_move_rel', dir*step);
+  scopeZRefresh();
+}
+async function scopeXYRefresh() {
+  if(!scopeTiConnected) return;
+  const r = await api('ti_xy_get');
+  if(r.ok) document.getElementById("scopeXYPos").textContent =
+    "X: "+(r.x/1000).toFixed(1)+" \u00b5m   Y: "+(r.y/1000).toFixed(1)+" \u00b5m";
+}
+async function scopeXYMove(dx, dy) {
+  if(!scopeTiConnected){ toast("Connect Ti first","error"); return; }
+  const step = parseInt(document.getElementById("scopeXYStep").value)||10000;
+  if(dx!==0) await api('ti_x_move_rel', dx*step);
+  if(dy!==0) await api('ti_y_move_rel', dy*step);
+  scopeXYRefresh();
+}
+async function scopeRefreshTi() {
+  scopeRefreshOptics(); scopeZRefresh(); scopeXYRefresh();
+  const s = await api('ti_shutter_state');
+  if(s.ok){ _shutterOpen = s.value===1; updateShutterBadge(); }
+  const l = await api('ti_dia_lamp_state');
+  if(l.ok){
+    _lampOn = l.on===1; updateLampBadge();
+    if(l.intensity!=null){
+      document.getElementById("scopeLampSlider").value = l.intensity;
+      document.getElementById("scopeLampVal").textContent = l.intensity;
+    }
   }
 }
 
-eel.expose(onCameraProtocolCountdown);
-function onCameraProtocolCountdown(step, remaining) {
-  document.getElementById("syncCamStatus").textContent=
-    "Step "+(step+1)+" \u2014 "+remaining;
+/* live quick toggles */
+function liveToggleShutter() { _shutterOpen ? scopeShutterClose() : scopeShutterOpen(); }
+function liveToggleLamp() { _lampOn ? scopeLampOff() : scopeLampOn(); }
+function scopeSetExposureFrom(v) {
+  document.getElementById("scopeExposure").value = v;
+  scopeSetExposure();
 }
 
-function _checkSyncDone() {
-  /* re-enable Run button once both protocols are finished */
-  /* simple heuristic: if the button is disabled, check status text */
-  const pDone = document.getElementById("syncPumpStatus").textContent;
-  const cDone = document.getElementById("syncCamStatus").textContent;
-  const pFinished = !syncPumpSteps.length || /complete|aborted|error/i.test(pDone);
-  const cFinished = !syncCamSteps.length  || /complete|aborted|error/i.test(cDone);
-  if(pFinished && cFinished) {
-    document.getElementById("syncRunBtn").disabled=false;
-    document.getElementById("syncStopBtn").disabled=true;
+/* ═══════════════════════════════════════════════════════════════════════════
+   SCOPE: COOLSNAP CAMERA
+   ═══════════════════════════════════════════════════════════════════════════ */
+async function scopeCamConnect() {
+  const r = await api('cam_connect');
+  if(r.error){ toast("Camera: "+r.error,"error"); return; }
+  scopeCamConnected = true;
+  document.getElementById("scopeCamBadge").className="badge on";
+  document.getElementById("scopeCamBadge").textContent="Online";
+  document.getElementById("scopeCamConn").disabled=true;
+  document.getElementById("scopeCamDisc").disabled=false;
+  document.getElementById("scopeCamInfo").textContent =
+    r.name+" \u2014 "+r.sensor[0]+"\u00d7"+r.sensor[1]+" "+r.bit_depth+"bit";
+  updateIndicators();
+  toast("CoolSNAP EZ connected","success");
+  logMsg("CoolSNAP EZ connected: "+r.name,"camera");
+  const dir = await api('cam_get_save_dir');
+  if(dir) document.getElementById("camSaveDir").textContent = dir;
+}
+async function scopeCamDisconnect() {
+  if(scopeLiveActive) await scopeToggleLive();
+  await api('cam_disconnect');
+  scopeCamConnected = false;
+  document.getElementById("scopeCamBadge").className="badge";
+  document.getElementById("scopeCamBadge").textContent="Offline";
+  document.getElementById("scopeCamConn").disabled=false;
+  document.getElementById("scopeCamDisc").disabled=true;
+  document.getElementById("scopeCamInfo").textContent="";
+  updateIndicators();
+}
+async function scopeSetExposure() {
+  const v = parseInt(document.getElementById("scopeExposure").value)||20;
+  const r = await api('cam_set_exposure', v);
+  if(r.error) toast(r.error,"error");
+  else toast("Exposure: "+v+"ms","success");
+}
+async function scopeSetBinning() {
+  const v = parseInt(document.getElementById("scopeBinning").value);
+  const r = await api('cam_set_binning', v);
+  if(r.error) toast(r.error,"error");
+  else toast("Binning: "+v+"x"+v,"success");
+}
+async function camSetSaveDir() {
+  const p = document.getElementById("camSaveDirInput").value.trim();
+  if(!p){ toast("Enter a path","error"); return; }
+  const r = await api('cam_set_save_dir', p);
+  if(r.error) toast(r.error,"error");
+  else { document.getElementById("camSaveDir").textContent = r.path; toast("Save dir updated","success"); }
+}
+
+function scopeShowPreview(b64) {
+  const img = document.getElementById("scopePreview");
+  img.src = "data:image/jpeg;base64,"+b64;
+  img.style.display = "block";
+  document.getElementById("scopePlaceholder").style.display = "none";
+}
+async function scopeSnap() {
+  if(!scopeCamConnected){ toast("Connect camera first","error"); return; }
+  const r = await api('cam_snap');
+  if(r.error){ toast("Snap: "+r.error,"error"); return; }
+  scopeShowPreview(r.image);
+}
+async function scopeSnapSave() {
+  if(!scopeCamConnected){ toast("Connect camera first","error"); return; }
+  const r = await api('cam_snap_save');
+  if(r.error){ toast("Snap: "+r.error,"error"); return; }
+  scopeShowPreview(r.image);
+  addToFilmstrip(r.file);
+  toast("Saved: "+r.file,"success");
+}
+
+async function scopeToggleLive() {
+  if(scopeLiveActive) {
+    scopeLiveActive = false;
+    if(_liveWs){ _liveWs.close(); _liveWs=null; }
+    await api('cam_live_stop');
+    document.getElementById("scopeLiveBtn").classList.remove("green");
+    document.getElementById("scopeLiveBtn").textContent = "Live";
+    document.getElementById("scopeFps").style.display = "none";
+    if(_fpsPoller){ clearInterval(_fpsPoller); _fpsPoller=null; }
+    return;
   }
+  if(!scopeCamConnected){ toast("Connect camera first","error"); return; }
+  const r = await api('cam_live_start');
+  if(r.error){ toast(r.error,"error"); return; }
+
+  scopeLiveActive = true;
+  document.getElementById("scopeLiveBtn").classList.add("green");
+  document.getElementById("scopeLiveBtn").textContent = "Stop Live";
+
+  const proto = location.protocol==="https:"?"wss:":"ws:";
+  _liveWs = new WebSocket(proto+"//"+location.host+"/cam/live");
+  _liveWs.binaryType = "blob";
+
+  const img = document.getElementById("scopePreview");
+  let prevUrl = null, frameCount = 0, fpsT0 = performance.now();
+
+  _liveWs.onmessage = function(e) {
+    const url = URL.createObjectURL(e.data);
+    img.src = url; img.style.display = "block";
+    document.getElementById("scopePlaceholder").style.display = "none";
+    if(prevUrl) URL.revokeObjectURL(prevUrl);
+    prevUrl = url; frameCount++;
+  };
+  _liveWs.onclose = function() {
+    if(scopeLiveActive){
+      scopeLiveActive=false;
+      document.getElementById("scopeLiveBtn").classList.remove("green");
+      document.getElementById("scopeLiveBtn").textContent="Live";
+      document.getElementById("scopeFps").style.display="none";
+      if(_fpsPoller){ clearInterval(_fpsPoller); _fpsPoller=null; }
+    }
+  };
+  const fpsEl = document.getElementById("scopeFps");
+  fpsEl.style.display = "block";
+  _fpsPoller = setInterval(()=>{
+    const dt = (performance.now()-fpsT0)/1000;
+    if(dt>0) fpsEl.textContent = (frameCount/dt).toFixed(1)+" FPS";
+    frameCount=0; fpsT0=performance.now();
+  }, 1000);
+}
+
+function addToFilmstrip(name) {
+  scopeCaptures.unshift(name);
+  const fs = document.getElementById("liveFilmstrip");
+  fs.innerHTML = scopeCaptures.map(n=>`<div class="filmstrip-item">${n}</div>`).join("");
+}
+
+onEvent("onCamCaptureComplete", function(filename) { addToFilmstrip(filename); });
+onEvent("onCamStatus", function(status, msg) {
+  document.getElementById("scopeCamStatus").textContent = msg;
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PRESETS (localStorage)
+   ═══════════════════════════════════════════════════════════════════════════ */
+function _loadStore(key) { try{ return JSON.parse(localStorage.getItem(key))||{}; }catch(e){ return {}; } }
+function _saveStore(key, obj) { localStorage.setItem(key, JSON.stringify(obj)); }
+
+/* Microscope presets */
+function msSavePreset() {
+  const name = document.getElementById("msPresetName").value.trim();
+  if(!name){ toast("Enter a preset name","error"); return; }
+  const obj = _loadStore("mos11_ms_presets");
+  obj[name] = {
+    objective: parseInt(document.getElementById("scopeNosepiece").value),
+    filter: parseInt(document.getElementById("scopeFilter").value),
+    lightPath: parseInt(document.getElementById("scopeLightPath").value),
+    lampIntensity: parseInt(document.getElementById("scopeLampSlider").value)
+  };
+  _saveStore("mos11_ms_presets", obj);
+  document.getElementById("msPresetName").value = "";
+  renderMsPresets();
+  refreshAcqDropdowns();
+  toast("Microscope preset saved","success");
+}
+async function msLoadPreset(name) {
+  const obj = _loadStore("mos11_ms_presets");
+  const p = obj[name]; if(!p) return;
+  if(!scopeTiConnected){ toast("Connect Ti first","error"); return; }
+  await api('ti_nosepiece_set', p.objective);
+  await api('ti_filter_set', p.filter);
+  await api('ti_light_path_set', p.lightPath);
+  await api('ti_dia_lamp_set_intensity', p.lampIntensity);
+  scopeRefreshTi();
+  toast("Loaded: "+name,"success");
+}
+function msDeletePreset(name) {
+  const obj = _loadStore("mos11_ms_presets");
+  delete obj[name];
+  _saveStore("mos11_ms_presets", obj);
+  renderMsPresets();
+  refreshAcqDropdowns();
+}
+function renderMsPresets() {
+  const obj = _loadStore("mos11_ms_presets");
+  const el = document.getElementById("msPresetList");
+  el.innerHTML = Object.keys(obj).map(n => {
+    const p = obj[n];
+    return `<div class="preset-chip" onclick="msLoadPreset('${n}')">
+      <span>${n}</span>
+      <span style="font-size:10px;color:var(--text3)">Obj:${p.objective} F:${p.filter}</span>
+      <span class="del" onclick="event.stopPropagation();msDeletePreset('${n}')">&times;</span>
+    </div>`;
+  }).join("") || '<span style="font-size:11px;color:var(--text3)">No presets saved</span>';
+}
+
+/* Camera presets */
+function camSavePreset() {
+  const name = document.getElementById("camPresetName").value.trim();
+  if(!name){ toast("Enter a preset name","error"); return; }
+  const obj = _loadStore("mos11_cam_presets");
+  obj[name] = {
+    exposure_ms: parseInt(document.getElementById("scopeExposure").value)||20,
+    binning: parseInt(document.getElementById("scopeBinning").value)||1
+  };
+  _saveStore("mos11_cam_presets", obj);
+  document.getElementById("camPresetName").value = "";
+  renderCamPresets();
+  refreshAcqDropdowns();
+  toast("Camera preset saved","success");
+}
+async function camLoadPreset(name) {
+  const obj = _loadStore("mos11_cam_presets");
+  const p = obj[name]; if(!p) return;
+  document.getElementById("scopeExposure").value = p.exposure_ms;
+  document.getElementById("scopeBinning").value = p.binning;
+  document.getElementById("liveExposure").value = p.exposure_ms;
+  await api('cam_set_exposure', p.exposure_ms);
+  await api('cam_set_binning', p.binning);
+  toast("Loaded: "+name,"success");
+}
+function camDeletePreset(name) {
+  const obj = _loadStore("mos11_cam_presets");
+  delete obj[name];
+  _saveStore("mos11_cam_presets", obj);
+  renderCamPresets();
+  refreshAcqDropdowns();
+}
+function renderCamPresets() {
+  const obj = _loadStore("mos11_cam_presets");
+  const el = document.getElementById("camPresetList");
+  el.innerHTML = Object.keys(obj).map(n => {
+    const p = obj[n];
+    return `<div class="preset-chip" onclick="camLoadPreset('${n}')">
+      <span>${n}</span>
+      <span style="font-size:10px;color:var(--text3)">${p.exposure_ms}ms ${p.binning}x${p.binning}</span>
+      <span class="del" onclick="event.stopPropagation();camDeletePreset('${n}')">&times;</span>
+    </div>`;
+  }).join("") || '<span style="font-size:11px;color:var(--text3)">No presets saved</span>';
+}
+
+/* Acquisition presets (combined) */
+function acqSavePreset() {
+  const name = document.getElementById("acqPresetName").value.trim();
+  const ms = document.getElementById("acqMsPreset").value;
+  const cam = document.getElementById("acqCamPreset").value;
+  if(!name){ toast("Enter a name","error"); return; }
+  if(!ms||!cam){ toast("Select both scope and camera presets","error"); return; }
+  const obj = _loadStore("mos11_acq_presets");
+  obj[name] = { microscopePreset: ms, cameraPreset: cam };
+  _saveStore("mos11_acq_presets", obj);
+  document.getElementById("acqPresetName").value = "";
+  renderAcqPresets();
+  toast("Acquisition preset created","success");
+}
+function acqDeletePreset(name) {
+  const obj = _loadStore("mos11_acq_presets");
+  delete obj[name];
+  _saveStore("mos11_acq_presets", obj);
+  renderAcqPresets();
+}
+function renderAcqPresets() {
+  const obj = _loadStore("mos11_acq_presets");
+  const el = document.getElementById("acqPresetList");
+  el.innerHTML = Object.keys(obj).map(n => {
+    const p = obj[n];
+    return `<div class="preset-chip">
+      <span>${n}</span>
+      <span style="font-size:10px;color:var(--text3)">${p.microscopePreset} + ${p.cameraPreset}</span>
+      <span class="del" onclick="acqDeletePreset('${n}')">&times;</span>
+    </div>`;
+  }).join("") || '<span style="font-size:11px;color:var(--text3)">No acquisition presets</span>';
+}
+function refreshAcqDropdowns() {
+  const msObj = _loadStore("mos11_ms_presets");
+  const camObj = _loadStore("mos11_cam_presets");
+  const msSel = document.getElementById("acqMsPreset");
+  const camSel = document.getElementById("acqCamPreset");
+  msSel.innerHTML = '<option value="">Scope preset...</option>' +
+    Object.keys(msObj).map(n=>`<option value="${n}">${n}</option>`).join("");
+  camSel.innerHTML = '<option value="">Camera preset...</option>' +
+    Object.keys(camObj).map(n=>`<option value="${n}">${n}</option>`).join("");
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   TIMELINE  –  Number-line with lanes
+   ═══════════════════════════════════════════════════════════════════════════ */
+let tlEvents = JSON.parse(localStorage.getItem("mos11_tl_events")||"[]");
+let tlLanes  = JSON.parse(localStorage.getItem("mos11_tl_lanes")||'null')
+               || [{id:"imaging", label:"Imaging", type:"imaging"}, {id:"pump0", label:"Pump 1", type:"pump", pumpIdx:0}];
+let tlSelectedId = null;
+let tlRunning = false;
+let tlPaused = false;
+let tlAbort = false;
+let _tlIdCounter = Date.now();
+function _tlId() { return 'ev' + (_tlIdCounter++); }
+
+const TL_COLORS = {
+  video:'tl-ev-video', stack:'tl-ev-stack', timelapse:'tl-ev-timelapse', pump:'tl-ev-pump'
+};
+const TL_LABELS = {
+  video:'Video', stack:'Image Stack', timelapse:'Timelapse', pump:'Pump'
+};
+
+function tlSaveEvents() {
+  localStorage.setItem("mos11_tl_events", JSON.stringify(tlEvents));
+}
+function tlSaveLanes() {
+  localStorage.setItem("mos11_tl_lanes", JSON.stringify(tlLanes));
+}
+function tlPxPerSec() {
+  return parseFloat(document.getElementById("tlZoom").value) || 40;
+}
+function tlTotalSec() {
+  return parseFloat(document.getElementById("tlDuration").value) || 60;
+}
+
+function tlOverlaps(laneId, start, dur, excludeId) {
+  const end = start + dur;
+  return tlEvents.some(e =>
+    e.laneId === laneId && e.id !== excludeId && e.start < end && (e.start + e.duration) > start
+  );
+}
+
+function tlFindFreeStart(laneId, desiredStart, dur, excludeId) {
+  let s = desiredStart;
+  let attempts = 0;
+  while(tlOverlaps(laneId, s, dur, excludeId) && attempts < 200) {
+    const blockers = tlEvents.filter(e =>
+      e.laneId === laneId && e.id !== excludeId && (e.start + e.duration) > s && e.start < (s + dur)
+    );
+    s = Math.max(...blockers.map(e => e.start + e.duration));
+    s = Math.round(s * 20) / 20;
+    attempts++;
+  }
+  return s;
+}
+
+function tlAddEvent(type) {
+  const pps = tlPxPerSec();
+  const scroll = document.getElementById("tlScroll");
+  const startSec = Math.round((scroll.scrollLeft / pps) * 10) / 10;
+  const dur = type === 'timelapse' ? 10 : type === 'video' ? 5 : 2;
+  const imgLane = tlLanes.find(l => l.type === 'imaging');
+  if(!imgLane) return;
+  const safeStart = tlFindFreeStart(imgLane.id, startSec, dur, null);
+  const ev = {
+    id: _tlId(), type, laneId: imgLane.id, name: TL_LABELS[type],
+    start: safeStart, duration: dur,
+    msPreset: '', camPreset: '',
+    stackPresets: [],
+    frames: type === 'stack' ? 10 : 1,
+    interval: type === 'timelapse' ? 1 : 0,
+    zStart: 0, zEnd: 0, zStep: 1, fps: 30
+  };
+  tlEvents.push(ev); tlSaveEvents();
+  tlSelectedId = ev.id; tlRender(); tlOpenEditor(ev);
+}
+
+function tlAddPumpEvent() {
+  const pps = tlPxPerSec();
+  const scroll = document.getElementById("tlScroll");
+  const startSec = Math.round((scroll.scrollLeft / pps) * 10) / 10;
+  const pumpLane = tlLanes.find(l => l.type === 'pump');
+  if(!pumpLane){ toast("Add a pump lane first","error"); return; }
+  const safeStart = tlFindFreeStart(pumpLane.id, startSec, 5, null);
+  const ev = {
+    id: _tlId(), type:'pump', laneId: pumpLane.id, name:'Pump',
+    start: safeStart, duration: 5,
+    pumpIdx: pumpLane.pumpIdx || 0,
+    rate: 100, rateUnit: 'UL/HR', direction: 'INF', volume: 0,
+    action: 'run'
+  };
+  tlEvents.push(ev); tlSaveEvents();
+  tlSelectedId = ev.id; tlRender(); tlOpenEditor(ev);
+}
+
+function tlAddPumpLane() {
+  const pumpLanes = tlLanes.filter(l => l.type === 'pump');
+  const nextIdx = pumpLanes.length;
+  if(nextIdx >= 4){ toast("Max 4 pump lanes","error"); return; }
+  const lane = { id: 'pump'+nextIdx, label:'Pump '+(nextIdx+1), type:'pump', pumpIdx: nextIdx };
+  tlLanes.push(lane); tlSaveLanes(); tlRender();
+}
+
+function tlRemoveLane(laneId) {
+  const lane = tlLanes.find(l => l.id === laneId);
+  if(!lane || lane.type === 'imaging') return;
+  tlLanes = tlLanes.filter(l => l.id !== laneId);
+  tlEvents = tlEvents.filter(e => e.laneId !== laneId);
+  tlSaveLanes(); tlSaveEvents();
+  if(tlSelectedId && !tlEvents.find(e => e.id === tlSelectedId)) {
+    tlSelectedId = null;
+    document.getElementById("tlEditor").classList.remove("open");
+  }
+  tlRender();
+}
+
+/* ── Ruler axis ── */
+function tlDrawAxis() {
+  const canvas = document.getElementById("tlAxisCanvas");
+  const pps = tlPxPerSec();
+  const total = tlTotalSec();
+  const w = Math.max(total * pps, 800);
+  canvas.width = w; canvas.height = 28;
+  canvas.style.width = w + 'px';
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0,0,w,28);
+  ctx.fillStyle = '#94a3b8'; ctx.strokeStyle = '#cbd5e1';
+  ctx.font = '10px Inter, sans-serif'; ctx.textAlign = 'center';
+
+  const majorStep = pps >= 80 ? 1 : pps >= 30 ? 5 : pps >= 12 ? 10 : 30;
+  const minorStep = majorStep <= 1 ? 0.25 : majorStep <= 5 ? 1 : majorStep <= 10 ? 2 : 5;
+
+  for(let t = 0; t <= total; t += minorStep) {
+    const x = Math.round(t * pps) + 0.5;
+    const isMajor = Math.abs(t % majorStep) < 0.01 || Math.abs(t % majorStep - majorStep) < 0.01;
+    ctx.beginPath();
+    ctx.moveTo(x, isMajor ? 8 : 18);
+    ctx.lineTo(x, 28);
+    ctx.lineWidth = isMajor ? 1 : 0.5;
+    ctx.stroke();
+    if(isMajor) {
+      const label = t >= 60 ? Math.floor(t/60)+'m'+((t%60)?((t%60)+'s'):'') : t+'s';
+      ctx.fillText(label, x, 15);
+    }
+  }
+}
+
+/* ── Build lanes HTML + render events ── */
+function tlRender() {
+  const pps = tlPxPerSec();
+  const total = tlTotalSec();
+  const rulerW = Math.max(total * pps, 800);
+  document.getElementById("tlRuler").style.width = rulerW + 'px';
+
+  tlDrawAxis();
+
+  const lanesEl = document.getElementById("tlLanes");
+  lanesEl.innerHTML = '';
+
+  tlLanes.forEach(lane => {
+    const row = document.createElement("div");
+    row.className = 'tl-lane-row';
+    row.style.position = 'relative';
+
+    const label = document.createElement("div");
+    label.className = 'tl-lane-label';
+    label.style.top = '10px';
+    label.textContent = lane.label;
+    row.appendChild(label);
+
+    const laneDiv = document.createElement("div");
+    laneDiv.className = 'tl-lane';
+    laneDiv.dataset.laneId = lane.id;
+    laneDiv.innerHTML = '<div class="tl-lane-bg"></div>';
+    laneDiv.style.width = (rulerW - 56) + 'px';
+    row.appendChild(laneDiv);
+
+    if(lane.type === 'pump') {
+      const actions = document.createElement("div");
+      actions.className = 'tl-lane-actions';
+      actions.innerHTML = `<button title="Remove lane" onclick="tlRemoveLane('${lane.id}')">&times;</button>`;
+      row.appendChild(actions);
+    }
+
+    lanesEl.appendChild(row);
+
+    tlEvents.filter(e => e.laneId === lane.id).forEach(ev => {
+      const left = ev.start * pps;
+      const width = Math.max(ev.duration * pps, 14);
+      const colorClass = TL_COLORS[ev.type] || 'tl-ev-pump';
+      const div = document.createElement("div");
+      div.className = 'tl-event ' + colorClass + (ev.id===tlSelectedId?' selected':'');
+      div.style.left = left + 'px';
+      div.style.width = width + 'px';
+      div.dataset.id = ev.id;
+      div.innerHTML = `<span class="ev-label">${ev.name}</span>
+        <div class="ev-handle left"></div><div class="ev-handle right"></div>`;
+
+      div.addEventListener("mousedown", e => {
+        if(e.target.classList.contains("ev-handle")) return;
+        tlSelectedId = ev.id;
+        tlRender(); tlOpenEditor(ev);
+        _tlStartDrag(e, ev, 'move', laneDiv, pps);
+      });
+      div.querySelector(".ev-handle.left").addEventListener("mousedown", e => {
+        e.stopPropagation();
+        _tlStartDrag(e, ev, 'resize-left', laneDiv, pps);
+      });
+      div.querySelector(".ev-handle.right").addEventListener("mousedown", e => {
+        e.stopPropagation();
+        _tlStartDrag(e, ev, 'resize-right', laneDiv, pps);
+      });
+      laneDiv.appendChild(div);
+    });
+  });
+}
+
+/* ── Drag / resize (with overlap prevention) ── */
+function _tlStartDrag(e, ev, mode, lane, pps) {
+  e.preventDefault();
+  const startX = e.clientX;
+  const origStart = ev.start;
+  const origDur = ev.duration;
+
+  function onMove(e2) {
+    const dx = e2.clientX - startX;
+    const dt = dx / pps;
+    let newStart = ev.start, newDur = ev.duration;
+
+    if(mode === 'move') {
+      newStart = Math.max(0, Math.round((origStart + dt)*20)/20);
+      newDur = origDur;
+    } else if(mode === 'resize-left') {
+      newStart = Math.max(0, Math.round((origStart + dt)*20)/20);
+      newDur = origDur - (newStart - origStart);
+      if(newDur < 0.1) return;
+    } else {
+      newStart = origStart;
+      newDur = Math.max(0.1, Math.round((origDur + dt)*20)/20);
+    }
+
+    if(!tlOverlaps(ev.laneId, newStart, newDur, ev.id)) {
+      ev.start = newStart;
+      ev.duration = newDur;
+      tlRender(); tlOpenEditor(ev);
+    }
+  }
+  function onUp() {
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+    tlSaveEvents();
+  }
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+}
+
+/* ── Editor panel ── */
+function tlRefreshEditorDropdowns() {
+  const msObj = _loadStore("mos11_ms_presets");
+  const camObj = _loadStore("mos11_cam_presets");
+  const msSel = document.getElementById("tlEdMsPreset");
+  const camSel = document.getElementById("tlEdCamPreset");
+  msSel.innerHTML = '<option value="">None</option>' +
+    Object.keys(msObj).map(n=>`<option value="${n}">${n}</option>`).join("");
+  camSel.innerHTML = '<option value="">None</option>' +
+    Object.keys(camObj).map(n=>`<option value="${n}">${n}</option>`).join("");
+}
+
+function tlOpenEditor(ev) {
+  const editor = document.getElementById("tlEditor");
+  editor.classList.add("open");
+  document.getElementById("tlEdDelete").style.display = "";
+  document.getElementById("tlEdTitle").textContent = (TL_LABELS[ev.type]||'Pump') + ': ' + ev.name;
+  document.getElementById("tlEdName").value = ev.name;
+  document.getElementById("tlEdStart").value = ev.start;
+  document.getElementById("tlEdDur").value = ev.duration;
+
+  const presetCol = document.getElementById("tlEdPresetCol");
+  const ts = document.getElementById("tlEdTypeSettings");
+
+  if(ev.type === 'pump') {
+    presetCol.style.display = 'none';
+    const pumpLanes = tlLanes.filter(l => l.type === 'pump');
+    ts.innerHTML = `<div class="field" style="margin:0">
+      <label>Pump</label>
+      <select id="tlEdPumpLane" onchange="tlEditorChanged()" style="min-width:80px">
+        ${pumpLanes.map(l => `<option value="${l.id}" ${ev.laneId===l.id?'selected':''}>${l.label}</option>`).join('')}
+      </select>
+    </div>
+    <div class="field" style="margin:0">
+      <label>Action</label>
+      <select id="tlEdPumpAction" onchange="tlEditorChanged()" style="min-width:70px">
+        <option value="run" ${ev.action==='run'?'selected':''}>Run</option>
+        <option value="stop" ${ev.action==='stop'?'selected':''}>Stop</option>
+      </select>
+    </div>
+    <div class="field" style="margin:0">
+      <label>Rate</label>
+      <input type="number" id="tlEdPumpRate" value="${ev.rate||100}" min="0" step="1"
+             style="width:70px" oninput="tlEditorChanged()">
+      <select id="tlEdPumpRateUnit" onchange="tlEditorChanged()" style="min-width:60px">
+        <option value="UL/MIN" ${ev.rateUnit==='UL/MIN'?'selected':''}>µL/min</option>
+        <option value="UL/HR" ${ev.rateUnit==='UL/HR'?'selected':''}>µL/hr</option>
+        <option value="ML/MIN" ${ev.rateUnit==='ML/MIN'?'selected':''}>mL/min</option>
+        <option value="ML/HR" ${ev.rateUnit==='ML/HR'?'selected':''}>mL/hr</option>
+      </select>
+    </div>
+    <div class="field" style="margin:0">
+      <label>Direction</label>
+      <select id="tlEdPumpDir" onchange="tlEditorChanged()" style="min-width:70px">
+        <option value="INF" ${ev.direction==='INF'?'selected':''}>Infuse</option>
+        <option value="WDR" ${ev.direction==='WDR'?'selected':''}>Withdraw</option>
+      </select>
+    </div>`;
+  } else {
+    presetCol.style.display = '';
+    tlRefreshEditorDropdowns();
+    document.getElementById("tlEdMsPreset").value = ev.msPreset || '';
+    document.getElementById("tlEdCamPreset").value = ev.camPreset || '';
+
+    if(ev.type === 'video') {
+      ts.innerHTML = `<div class="field" style="margin:0">
+        <label>FPS</label>
+        <input type="number" id="tlEdFps" value="${ev.fps||30}" min="1" max="120"
+               style="width:60px" oninput="tlEditorChanged()">
+      </div>`;
+    } else if(ev.type === 'stack') {
+      const acqObj = _loadStore("mos11_acq_presets");
+      const acqNames = Object.keys(acqObj);
+      const selPresets = ev.stackPresets || [];
+      ts.innerHTML = `<div class="field" style="margin:0">
+        <label>Z start</label>
+        <input type="number" id="tlEdZStart" value="${ev.zStart||0}" step="0.1"
+               style="width:60px" oninput="tlEditorChanged()">
+        <span style="font-size:10px;color:var(--text3)">µm</span>
+      </div>
+      <div class="field" style="margin:0">
+        <label>Z end</label>
+        <input type="number" id="tlEdZEnd" value="${ev.zEnd||0}" step="0.1"
+               style="width:60px" oninput="tlEditorChanged()">
+        <span style="font-size:10px;color:var(--text3)">µm</span>
+      </div>
+      <div class="field" style="margin:0">
+        <label>Z step</label>
+        <input type="number" id="tlEdZStep" value="${ev.zStep||1}" min="0.1" step="0.1"
+               style="width:60px" oninput="tlEditorChanged()">
+        <span style="font-size:10px;color:var(--text3)">µm</span>
+      </div>
+      <div style="margin-top:4px">
+        <label style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px">
+          Cycle presets per Z-slice</label>
+        <select id="tlEdStackPresets" multiple onchange="tlEditorChanged()"
+                style="width:100%;min-height:50px;font-size:11px;margin-top:4px">
+          ${acqNames.map(n => `<option value="${n}" ${selPresets.includes(n)?'selected':''}>${n}</option>`).join('')}
+        </select>
+        <span style="font-size:10px;color:var(--text3)">Ctrl+click to select multiple. Each Z-slice captures once per selected preset.</span>
+      </div>`;
+    } else {
+      ts.innerHTML = `<div class="field" style="margin:0">
+        <label>Interval</label>
+        <input type="number" id="tlEdInterval" value="${ev.interval||1}" min="0.1" step="0.1"
+               style="width:60px" oninput="tlEditorChanged()">
+        <span style="font-size:10px;color:var(--text3)">sec</span>
+      </div>
+      <div class="field" style="margin:0">
+        <label>Frames</label>
+        <input type="number" id="tlEdFrames" value="${ev.frames||10}" min="1"
+               style="width:60px" oninput="tlEditorChanged()">
+      </div>`;
+    }
+  }
+}
+
+function tlEditorChanged() {
+  const ev = tlEvents.find(e => e.id === tlSelectedId);
+  if(!ev) return;
+  ev.name = document.getElementById("tlEdName").value || ev.type;
+
+  const wantStart = parseFloat(document.getElementById("tlEdStart").value) || 0;
+  const wantDur = parseFloat(document.getElementById("tlEdDur").value) || 1;
+  const newLaneId = ev.type === 'pump'
+    ? (document.getElementById("tlEdPumpLane")?.value || ev.laneId)
+    : ev.laneId;
+
+  if(!tlOverlaps(newLaneId, wantStart, wantDur, ev.id)) {
+    ev.start = wantStart;
+    ev.duration = wantDur;
+    ev.laneId = newLaneId;
+  } else {
+    document.getElementById("tlEdStart").value = ev.start;
+    document.getElementById("tlEdDur").value = ev.duration;
+  }
+
+  if(ev.type === 'pump') {
+    const act = document.getElementById("tlEdPumpAction");
+    if(act) ev.action = act.value;
+    const rate = document.getElementById("tlEdPumpRate");
+    if(rate) ev.rate = parseFloat(rate.value) || 0;
+    const unit = document.getElementById("tlEdPumpRateUnit");
+    if(unit) ev.rateUnit = unit.value;
+    const dir = document.getElementById("tlEdPumpDir");
+    if(dir) ev.direction = dir.value;
+    const lane = tlLanes.find(l => l.id === ev.laneId);
+    if(lane) ev.pumpIdx = lane.pumpIdx;
+  } else {
+    ev.msPreset = document.getElementById("tlEdMsPreset").value;
+    ev.camPreset = document.getElementById("tlEdCamPreset").value;
+    const fps = document.getElementById("tlEdFps");
+    if(fps) ev.fps = parseInt(fps.value) || 30;
+    const frames = document.getElementById("tlEdFrames");
+    if(frames) ev.frames = parseInt(frames.value) || 1;
+    const zs = document.getElementById("tlEdZStart");
+    if(zs) ev.zStart = parseFloat(zs.value) || 0;
+    const ze = document.getElementById("tlEdZEnd");
+    if(ze) ev.zEnd = parseFloat(ze.value) || 0;
+    const zst = document.getElementById("tlEdZStep");
+    if(zst) ev.zStep = parseFloat(zst.value) || 1;
+    const intv = document.getElementById("tlEdInterval");
+    if(intv) ev.interval = parseFloat(intv.value) || 1;
+
+    const sp = document.getElementById("tlEdStackPresets");
+    if(sp) ev.stackPresets = Array.from(sp.selectedOptions).map(o => o.value);
+  }
+
+  document.getElementById("tlEdTitle").textContent = (TL_LABELS[ev.type]||'Pump') + ': ' + ev.name;
+  tlSaveEvents(); tlRender();
+}
+
+function tlDeleteSelected() {
+  tlEvents = tlEvents.filter(e => e.id !== tlSelectedId);
+  tlSelectedId = null;
+  tlSaveEvents();
+  document.getElementById("tlEditor").classList.remove("open");
+  tlRender();
+}
+
+document.addEventListener("click", e => {
+  if(!e.target.closest(".tl-event") && !e.target.closest(".tl-editor") &&
+     !e.target.closest(".tl-toolbar") && e.target.closest(".tl-ruler-wrap")) {
+    tlSelectedId = null;
+    document.getElementById("tlEditor").classList.remove("open");
+    tlRender();
+  }
+});
+
+/* ── Execution engine ── */
+async function tlApplyMsPreset(presetName) {
+  const ms = _loadStore("mos11_ms_presets");
+  const p = ms[presetName];
+  if(!p || !scopeTiConnected) return;
+  await api('ti_nosepiece_set', p.objective);
+  await api('ti_filter_set', p.filter);
+  await api('ti_light_path_set', p.lightPath);
+  if(p.lampIntensity != null) await api('ti_dia_lamp_set_intensity', p.lampIntensity);
+}
+
+async function tlApplyCamPreset(presetName) {
+  const cam = _loadStore("mos11_cam_presets");
+  const p = cam[presetName];
+  if(!p || !scopeCamConnected) return;
+  await api('cam_set_exposure', p.exposure_ms);
+  await api('cam_set_binning', p.binning);
+}
+
+async function tlApplyAcqPreset(presetName) {
+  const acq = _loadStore("mos11_acq_presets");
+  const a = acq[presetName]; if(!a) return;
+  await tlApplyMsPreset(a.microscopePreset);
+  await tlApplyCamPreset(a.cameraPreset);
+}
+
+async function tlApplyPresets(ev) {
+  if(ev.msPreset) await tlApplyMsPreset(ev.msPreset);
+  if(ev.camPreset) await tlApplyCamPreset(ev.camPreset);
+}
+
+function tlSleep(ms) {
+  return new Promise(resolve => {
+    const id = setTimeout(resolve, ms);
+    const check = setInterval(()=>{
+      if(tlAbort){ clearTimeout(id); clearInterval(check); resolve(); }
+    }, 100);
+  });
+}
+
+async function tlPlay() {
+  if(!tlEvents.length){ toast("Add events to timeline first","error"); return; }
+  tlRunning = true; tlPaused = false; tlAbort = false;
+  document.getElementById("tlPlayBtn").disabled = true;
+  document.getElementById("tlPauseBtn").disabled = false;
+  document.getElementById("tlStopBtn").disabled = false;
+  const progress = document.getElementById("tlProgress");
+
+  const sorted = [...tlEvents].sort((a,b) => a.start - b.start);
+  const pps = tlPxPerSec();
+  const ph = document.getElementById("tlPlayhead");
+  const t0 = performance.now();
+  const totalDur = tlTotalSec();
+  const running = new Set();
+
+  const runEvent = async (ev) => {
+    running.add(ev.id);
+    const el = document.querySelector(`.tl-event[data-id="${ev.id}"]`);
+    if(el) el.classList.add("running");
+    logMsg(`Timeline: starting ${ev.type} "${ev.name}"`, "exp");
+
+    if(ev.type === 'pump') {
+      const pi = ev.pumpIdx || 0;
+      if(ev.action === 'stop') {
+        await api('pump_stop', pi);
+      } else {
+        await api('pump_set_rate', pi, ev.rate||100, ev.rateUnit||'UL/HR');
+        await api('pump_set_direction', pi, ev.direction||'INF');
+        await api('pump_run', pi);
+        await tlSleep(ev.duration * 1000);
+        if(!tlAbort) await api('pump_stop', pi);
+      }
+    } else {
+      await tlApplyPresets(ev);
+
+      if(scopeTiConnected) await api('ti_shutter_open');
+
+      if(ev.type === 'video') {
+        const frameCount = Math.round(ev.duration * (ev.fps||30));
+        for(let f = 0; f < frameCount && !tlAbort; f++) {
+          while(tlPaused && !tlAbort) await tlSleep(100);
+          progress.textContent = `${ev.name}: frame ${f+1}/${frameCount}`;
+          await api('cam_snap_save');
+          await tlSleep(1000 / (ev.fps||30));
+        }
+      } else if(ev.type === 'stack') {
+        const zStep = ev.zStep || 1;
+        const zStart = ev.zStart || 0;
+        const zEnd = ev.zEnd || 0;
+        const slices = zEnd !== zStart
+          ? Math.max(1, Math.floor(Math.abs(zEnd - zStart) / zStep) + 1)
+          : (ev.frames || 10);
+        const presets = ev.stackPresets && ev.stackPresets.length ? ev.stackPresets : null;
+
+        for(let s = 0; s < slices && !tlAbort; s++) {
+          while(tlPaused && !tlAbort) await tlSleep(100);
+
+          if(zEnd !== zStart) {
+            const z = zStart + s * zStep * Math.sign(zEnd - zStart);
+            if(scopeTiConnected) await api('ti_z_set', z);
+          }
+
+          if(presets) {
+            for(let pi = 0; pi < presets.length && !tlAbort; pi++) {
+              progress.textContent = `${ev.name}: Z ${s+1}/${slices} preset ${pi+1}/${presets.length}`;
+              await tlApplyAcqPreset(presets[pi]);
+              await api('cam_snap_save');
+            }
+          } else {
+            progress.textContent = `${ev.name}: slice ${s+1}/${slices}`;
+            await api('cam_snap_save');
+          }
+        }
+      } else if(ev.type === 'timelapse') {
+        const frames = ev.frames || 10;
+        for(let f = 0; f < frames && !tlAbort; f++) {
+          while(tlPaused && !tlAbort) await tlSleep(100);
+          progress.textContent = `${ev.name}: capture ${f+1}/${frames}`;
+          await api('cam_snap_save');
+          if(f < frames - 1) await tlSleep((ev.interval||1) * 1000);
+        }
+      }
+
+      if(scopeTiConnected) await api('ti_shutter_close');
+    }
+
+    running.delete(ev.id);
+    if(el) el.classList.remove("running");
+  };
+
+  const playheadLoop = () => {
+    if(!tlRunning) return;
+    const elapsed = (performance.now() - t0) / 1000;
+    ph.style.left = (56 + elapsed * pps) + 'px';
+    if(elapsed < totalDur) requestAnimationFrame(playheadLoop);
+  };
+  requestAnimationFrame(playheadLoop);
+
+  for(const ev of sorted) {
+    if(tlAbort) break;
+    const elapsed = (performance.now() - t0) / 1000;
+    const wait = ev.start - elapsed;
+    if(wait > 0.05) await tlSleep(wait * 1000);
+    if(tlAbort) break;
+    runEvent(ev);
+  }
+
+  while(running.size > 0 && !tlAbort) await tlSleep(200);
+
+  tlRunning = false;
+  ph.style.left = '-10px';
+  document.getElementById("tlPlayBtn").disabled = false;
+  document.getElementById("tlPauseBtn").disabled = true;
+  document.getElementById("tlStopBtn").disabled = true;
+  progress.textContent = tlAbort ? "Stopped" : "Complete";
+  if(!tlAbort) toast("Timeline complete","success");
+  logMsg("Timeline " + (tlAbort ? "stopped" : "complete"), "exp");
+  tlRender();
+}
+
+function tlPause() {
+  tlPaused = !tlPaused;
+  document.getElementById("tlPauseBtn").textContent = tlPaused ? "\u25b6 Resume" : "\u23f8 Pause";
+}
+function tlStop() {
+  tlAbort = true;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    INIT
    ═══════════════════════════════════════════════════════════════════════════ */
 buildPumps();
-onScActionChange();
 refreshPorts();
-refreshExpList();
+renderMsPresets();
+renderCamPresets();
+renderAcqPresets();
+refreshAcqDropdowns();
+tlRender();
 logMsg("MOS-11 Control System ready","sys");
 </script>
 </body>

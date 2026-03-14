@@ -2,39 +2,90 @@
 """
 MOS-11 Modular Control System
 ──────────────────────────────
-Unified web interface for synchronised syringe-pump and camera control.
+Flask-based web server with WebSocket live-view streaming.
+Uses real OS threads (no gevent) so blocking hardware drivers never stall HTTP.
 
 Usage:
-    python control_server.py                     # localhost:8080, opens no browser
+    python control_server.py                     # localhost:8080
     python control_server.py --port 9000         # custom port
-    python control_server.py --host 0.0.0.0      # accessible over LAN / VPN
+    python control_server.py --host 0.0.0.0      # accessible over LAN
 """
 
-import eel
 import os
 import sys
 import argparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import modules.pumps       # noqa: F401, E402 – registers @eel.expose functions
-import modules.camera      # noqa: F401, E402
-import modules.experiment  # noqa: F401, E402
+from modules._api import app
+import modules.pumps                   # noqa: F401
+import modules.camera                  # noqa: F401
+import modules.experiment              # noqa: F401
+import modules.nikon_ti                # noqa: F401
+import modules.coolsnap                # noqa: F401
 
-WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
-eel.init(WEB_DIR)
+from flask import Response, jsonify
+from flask_sock import Sock
+import modules.coolsnap as _cs
+
+sock = Sock(app)
+
+
+# ── WebSocket live stream ───────────────────────────────────────────────────
+# Single persistent connection, binary JPEG frames pushed as fast as the
+# camera produces them.  No HTTP overhead per frame, no base64.
+
+@sock.route("/cam/live")
+def cam_live_ws(ws):
+    """Stream binary JPEG frames over WebSocket."""
+    prev_id = None
+    while True:
+        if not _cs.live_is_active():
+            _cs._frame_event.wait(timeout=1.0)
+            if not _cs.live_is_active():
+                break
+
+        _cs._frame_event.wait(timeout=0.5)
+        _cs._frame_event.clear()
+
+        jpeg = _cs.get_live_jpeg()
+        if jpeg is None or jpeg is prev_id:
+            continue
+        prev_id = jpeg
+        try:
+            ws.send(jpeg)
+        except Exception:
+            break
+
+
+# ── HTTP fallback endpoints (snap preview, FPS readout) ─────────────────────
+
+@app.route("/cam/frame")
+def cam_frame():
+    """Return the latest JPEG frame (used by snap, not live view)."""
+    jpeg = _cs.get_live_jpeg()
+    if jpeg is None:
+        return Response(status=204)
+    return Response(jpeg, mimetype="image/jpeg",
+                    headers={"Cache-Control": "no-store",
+                             "Content-Length": str(len(jpeg))})
+
+
+@app.route("/cam/fps")
+def cam_fps():
+    return jsonify({"fps": _cs.get_live_fps(),
+                    "active": _cs.live_is_active()})
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MOS-11 Control System")
     parser.add_argument("--host", default="0.0.0.0",
-                        help="Listen address (default 0.0.0.0 for LAN access)")
-    parser.add_argument("--port", type=int, default=808 ,
+                        help="Listen address (default 0.0.0.0)")
+    parser.add_argument("--port", type=int, default=8080,
                         help="Listen port (default 8080)")
     args = parser.parse_args()
 
-    print(f"MOS-11 Control System")
+    print("MOS-11 Control System")
     print(f"  Local:   http://localhost:{args.port}")
     print(f"  Network: http://<this-machine-ip>:{args.port}")
-    eel.start("index.html", host=args.host, port=args.port,
-              mode=None, block=True)
+    app.run(host=args.host, port=args.port, threaded=True)

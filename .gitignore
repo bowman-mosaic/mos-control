@@ -3,9 +3,11 @@ __pycache__/
 *.pyo
 
 captured_videos/
+captures/
 saved_experiments/
 *.npy
 
 .env
 .vscode/
 .idea/
+.cursor/

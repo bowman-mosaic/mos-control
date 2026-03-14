@@ -5,7 +5,7 @@ stop-all.  Protocol execution is handled independently by modules.pumps
 starts both at the same time to synchronise them.
 """
 
-import eel
+from modules._api import expose
 import json
 import os
 from datetime import datetime
@@ -13,7 +13,7 @@ from datetime import datetime
 _EXPERIMENTS_DIR = os.path.join(os.path.dirname(__file__), "..", "experiments")
 
 
-@eel.expose
+@expose
 def experiment_save(name, payload):
     """Save an experiment configuration (pump + camera protocols) to JSON."""
     os.makedirs(_EXPERIMENTS_DIR, exist_ok=True)
@@ -25,7 +25,7 @@ def experiment_save(name, payload):
     return {"ok": True, "path": path}
 
 
-@eel.expose
+@expose
 def experiment_load(name):
     safe = "".join(c if c.isalnum() or c in "-_ " else "_" for c in name)
     path = os.path.join(_EXPERIMENTS_DIR, f"{safe}.json")
@@ -36,7 +36,7 @@ def experiment_load(name):
     return {"ok": True, "data": data}
 
 
-@eel.expose
+@expose
 def experiment_list_saved():
     if not os.path.isdir(_EXPERIMENTS_DIR):
         return []
@@ -44,7 +44,7 @@ def experiment_list_saved():
                   if f.endswith(".json"))
 
 
-@eel.expose
+@expose
 def experiment_delete_saved(name):
     safe = "".join(c if c.isalnum() or c in "-_ " else "_" for c in name)
     path = os.path.join(_EXPERIMENTS_DIR, f"{safe}.json")
@@ -54,7 +54,7 @@ def experiment_delete_saved(name):
     return {"error": "Not found"}
 
 
-@eel.expose
+@expose
 def experiment_stop_all():
     """Stop every running pump protocol and the camera protocol."""
     from modules import pumps as _p

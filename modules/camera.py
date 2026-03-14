@@ -7,7 +7,7 @@ camera functions to work.  If pycromanager is not installed, the module
 loads but all functions return an appropriate error.
 """
 
-import eel
+from modules._api import expose, push_event
 import threading
 import numpy as np
 import base64
@@ -105,7 +105,7 @@ def _record_video(core, duration_sec, fps):
 
 # ── Connection ──────────────────────────────────────────────────────────────
 
-@eel.expose
+@expose
 def camera_connect():
     global _core
     if not _HAS_PYCROMANAGER:
@@ -118,7 +118,7 @@ def camera_connect():
         return {"error": str(e)}
 
 
-@eel.expose
+@expose
 def camera_disconnect():
     global _core, _live_active
     _live_active = False
@@ -126,14 +126,14 @@ def camera_disconnect():
     return {"ok": True}
 
 
-@eel.expose
+@expose
 def camera_is_connected():
     return _core is not None
 
 
 # ── Preview ─────────────────────────────────────────────────────────────────
 
-@eel.expose
+@expose
 def camera_snap():
     """Snap a single image and return it as base64 PNG for the preview pane."""
     if not _core:
@@ -147,21 +147,21 @@ def camera_snap():
         return {"error": str(e)}
 
 
-@eel.expose
+@expose
 def camera_set_live(active):
     global _live_active
     _live_active = bool(active)
     return {"ok": True}
 
 
-@eel.expose
+@expose
 def camera_is_live():
     return _live_active
 
 
 # ── Capture ─────────────────────────────────────────────────────────────────
 
-@eel.expose
+@expose
 def camera_set_save_dir(path):
     global _save_dir
     _save_dir = path
@@ -169,12 +169,12 @@ def camera_set_save_dir(path):
     return {"ok": True, "path": _save_dir}
 
 
-@eel.expose
+@expose
 def camera_get_save_dir():
     return _save_dir
 
 
-@eel.expose
+@expose
 def camera_capture_video(duration_sec=10, fps=10):
     """Start a background video capture."""
     global _capture_thread
@@ -217,13 +217,13 @@ def snap_image_blocking():
 
 def _capture_thread_fn(duration_sec, fps):
     try:
-        eel.onCameraStatus("capturing",
-                           f"Recording {duration_sec}s video ...")()
+        push_event("onCameraStatus", "capturing",
+                   f"Recording {duration_sec}s video ...")
         path = capture_video_blocking(duration_sec, fps)
-        eel.onCameraStatus("idle", f"Saved: {os.path.basename(path)}")()
-        eel.onCameraCaptureComplete(os.path.basename(path))()
+        push_event("onCameraStatus", "idle", f"Saved: {os.path.basename(path)}")
+        push_event("onCameraCaptureComplete", os.path.basename(path))
     except Exception as e:
-        eel.onCameraStatus("error", str(e))()
+        push_event("onCameraStatus", "error", str(e))
 
 
 # ── Camera Protocol ─────────────────────────────────────────────────────────
@@ -239,7 +239,7 @@ def _hms_to_seconds(hms):
     return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
 
 
-@eel.expose
+@expose
 def camera_run_protocol(steps):
     """Run a camera protocol — a sequence of Capture, Image, and Pause steps.
 
@@ -261,7 +261,7 @@ def camera_run_protocol(steps):
     return {"ok": True}
 
 
-@eel.expose
+@expose
 def camera_stop_protocol():
     _proto_stop.set()
     if _proto_thread and _proto_thread.is_alive():
@@ -272,8 +272,8 @@ def camera_stop_protocol():
 def _run_camera_protocol(steps):
     try:
         n = len(steps)
-        eel.onCameraProtocolUpdate(-1, "started",
-                                   f"Camera protocol started ({n} steps)")()
+        push_event("onCameraProtocolUpdate", -1, "started",
+                   f"Camera protocol started ({n} steps)")
 
         for i, step in enumerate(steps):
             if _proto_stop.is_set():
@@ -284,29 +284,26 @@ def _run_camera_protocol(steps):
             if action == "Capture":
                 dur = float(step.get("duration_sec", 10))
                 fps = int(step.get("fps", 10))
-                eel.onCameraProtocolUpdate(
-                    i, "running",
-                    f"Step {i+1}: Capturing {dur}s @{fps}fps")()
+                push_event("onCameraProtocolUpdate", i, "running",
+                           f"Step {i+1}: Capturing {dur}s @{fps}fps")
                 path = capture_video_blocking(dur, fps)
-                eel.onCameraCaptureComplete(os.path.basename(path))()
-                eel.onCameraProtocolUpdate(
-                    i, "done",
-                    f"Step {i+1}: Saved {os.path.basename(path)}")()
+                push_event("onCameraCaptureComplete", os.path.basename(path))
+                push_event("onCameraProtocolUpdate", i, "done",
+                           f"Step {i+1}: Saved {os.path.basename(path)}")
 
             elif action == "Image":
-                eel.onCameraProtocolUpdate(
-                    i, "running", f"Step {i+1}: Snapping image")()
+                push_event("onCameraProtocolUpdate", i, "running",
+                           f"Step {i+1}: Snapping image")
                 path = snap_image_blocking()
-                eel.onCameraCaptureComplete(os.path.basename(path))()
-                eel.onCameraProtocolUpdate(
-                    i, "done",
-                    f"Step {i+1}: Saved {os.path.basename(path)}")()
+                push_event("onCameraCaptureComplete", os.path.basename(path))
+                push_event("onCameraProtocolUpdate", i, "done",
+                           f"Step {i+1}: Saved {os.path.basename(path)}")
 
             elif action == "Pause":
                 wait = _hms_to_seconds(step.get("time", "00:00:00"))
                 if wait > 0:
-                    eel.onCameraProtocolUpdate(
-                        i, "running", f"Step {i+1}: Pause")()
+                    push_event("onCameraProtocolUpdate", i, "running",
+                               f"Step {i+1}: Pause")
                     end = time.monotonic() + wait
                     while time.monotonic() < end:
                         if _proto_stop.is_set():
@@ -314,13 +311,13 @@ def _run_camera_protocol(steps):
                         remaining = end - time.monotonic()
                         rm = int(remaining // 60)
                         rs = int(remaining % 60)
-                        eel.onCameraProtocolCountdown(
-                            i, f"{rm:02d}:{rs:02d}")()
+                        push_event("onCameraProtocolCountdown",
+                                   i, f"{rm:02d}:{rs:02d}")
                         time.sleep(1)
 
         status = "aborted" if _proto_stop.is_set() else "complete"
-        eel.onCameraProtocolUpdate(-1, status,
-                                   f"Camera protocol {status}")()
+        push_event("onCameraProtocolUpdate", -1, status,
+                   f"Camera protocol {status}")
     except Exception as e:
-        eel.onCameraProtocolUpdate(-1, "error",
-                                   f"Camera protocol error: {e}")()
+        push_event("onCameraProtocolUpdate", -1, "error",
+                   f"Camera protocol error: {e}")

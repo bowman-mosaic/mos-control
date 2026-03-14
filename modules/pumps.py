@@ -1,9 +1,9 @@
 """
-Pump control module — exposes Harvard Apparatus syringe pump operations to the
-Eel frontend.  Wraps Syringe_pump/syringe_pump_control.py without modifying it.
+Pump control module — exposes Harvard Apparatus syringe pump operations via
+Flask API.  Wraps Syringe_pump/syringe_pump_control.py without modifying it.
 """
 
-import eel
+from modules._api import expose, push_event
 import threading
 import time
 import sys
@@ -35,7 +35,7 @@ def _hms_to_seconds(hms):
 
 # ── Port discovery ──────────────────────────────────────────────────────────
 
-@eel.expose
+@expose
 def pump_get_ports():
     try:
         return list_serial_ports()
@@ -45,7 +45,7 @@ def pump_get_ports():
 
 # ── Connection ──────────────────────────────────────────────────────────────
 
-@eel.expose
+@expose
 def pump_connect(idx, port, address):
     if idx < 0 or idx >= NUM_PUMPS:
         return {"error": "Invalid pump index"}
@@ -57,7 +57,7 @@ def pump_connect(idx, port, address):
         return {"error": str(e)}
 
 
-@eel.expose
+@expose
 def pump_disconnect(idx):
     if idx < 0 or idx >= NUM_PUMPS:
         return {"error": "Invalid pump index"}
@@ -71,14 +71,14 @@ def pump_disconnect(idx):
     return {"ok": True}
 
 
-@eel.expose
+@expose
 def pump_is_connected(idx):
     return _pumps[idx] is not None
 
 
 # ── Settings ────────────────────────────────────────────────────────────────
 
-@eel.expose
+@expose
 def pump_set_diameter(idx, diameter_mm):
     if not _pumps[idx]:
         return {"error": "Not connected"}
@@ -89,7 +89,7 @@ def pump_set_diameter(idx, diameter_mm):
         return {"error": str(e)}
 
 
-@eel.expose
+@expose
 def pump_set_direction(idx, direction):
     if not _pumps[idx]:
         return {"error": "Not connected"}
@@ -102,7 +102,7 @@ def pump_set_direction(idx, direction):
 
 # ── Manual controls ─────────────────────────────────────────────────────────
 
-@eel.expose
+@expose
 def pump_set_rate(idx, rate, units):
     if not _pumps[idx]:
         return {"error": "Not connected"}
@@ -113,7 +113,7 @@ def pump_set_rate(idx, rate, units):
         return {"error": str(e)}
 
 
-@eel.expose
+@expose
 def pump_set_volume(idx, volume):
     if not _pumps[idx]:
         return {"error": "Not connected"}
@@ -124,7 +124,7 @@ def pump_set_volume(idx, volume):
         return {"error": str(e)}
 
 
-@eel.expose
+@expose
 def pump_run(idx):
     if not _pumps[idx]:
         return {"error": "Not connected"}
@@ -135,7 +135,7 @@ def pump_run(idx):
         return {"error": str(e)}
 
 
-@eel.expose
+@expose
 def pump_stop(idx):
     if not _pumps[idx]:
         return {"error": "Not connected"}
@@ -146,7 +146,7 @@ def pump_stop(idx):
         return {"error": str(e)}
 
 
-@eel.expose
+@expose
 def pump_clear_volume(idx):
     if not _pumps[idx]:
         return {"error": "Not connected"}
@@ -157,7 +157,7 @@ def pump_clear_volume(idx):
         return {"error": str(e)}
 
 
-@eel.expose
+@expose
 def pump_clear_target(idx):
     if not _pumps[idx]:
         return {"error": "Not connected"}
@@ -168,7 +168,7 @@ def pump_clear_target(idx):
         return {"error": str(e)}
 
 
-@eel.expose
+@expose
 def pump_get_status(idx):
     if not _pumps[idx]:
         return {"error": "Not connected"}
@@ -181,7 +181,7 @@ def pump_get_status(idx):
 
 # ── Protocol execution ──────────────────────────────────────────────────────
 
-@eel.expose
+@expose
 def pump_run_protocol(idx, steps):
     """Run a multi-step pump protocol.
     steps: list of {action, rate, units, time} dicts.
@@ -197,7 +197,7 @@ def pump_run_protocol(idx, steps):
     return {"ok": True}
 
 
-@eel.expose
+@expose
 def pump_stop_protocol(idx):
     _stop_protocol(idx)
     return {"ok": True}
@@ -216,8 +216,8 @@ def _stop_protocol(idx):
 
 def _run_protocol_thread(idx, steps):
     try:
-        eel.onPumpProtocolUpdate(idx, -1, "started",
-                                 f"Protocol started ({len(steps)} steps)")()
+        push_event("onPumpProtocolUpdate", idx, -1, "started",
+                   f"Protocol started ({len(steps)} steps)")
         for i, step in enumerate(steps):
             if _proto_stops[idx].is_set():
                 break
@@ -227,13 +227,13 @@ def _run_protocol_thread(idx, steps):
             time_s = step.get("time", "00:00:00")
 
             if action == "Run":
-                eel.onPumpProtocolUpdate(idx, i, "running",
-                                         f"Step {i+1}: Run {rate} {units}")()
+                push_event("onPumpProtocolUpdate", idx, i, "running",
+                           f"Step {i+1}: Run {rate} {units}")
                 _pumps[idx].set_rate(float(rate), units)
                 _pumps[idx].run()
             elif action == "Stop":
-                eel.onPumpProtocolUpdate(idx, i, "running",
-                                         f"Step {i+1}: Stop")()
+                push_event("onPumpProtocolUpdate", idx, i, "running",
+                           f"Step {i+1}: Stop")
                 _pumps[idx].stop()
 
             wait = _hms_to_seconds(time_s)
@@ -245,14 +245,14 @@ def _run_protocol_thread(idx, steps):
                     remaining = end - time.monotonic()
                     rm = int(remaining // 60)
                     rs = int(remaining % 60)
-                    eel.onPumpProtocolCountdown(idx, i, f"{rm:02d}:{rs:02d}")()
+                    push_event("onPumpProtocolCountdown", idx, i, f"{rm:02d}:{rs:02d}")
                     time.sleep(1)
 
         status = "aborted" if _proto_stops[idx].is_set() else "complete"
-        eel.onPumpProtocolUpdate(idx, -1, status, f"Protocol {status}")()
+        push_event("onPumpProtocolUpdate", idx, -1, status, f"Protocol {status}")
     except Exception as e:
         try:
             _pumps[idx].stop()
         except Exception:
             pass
-        eel.onPumpProtocolUpdate(idx, -1, "error", f"Protocol error: {e}")()
+        push_event("onPumpProtocolUpdate", idx, -1, "error", f"Protocol error: {e}")
