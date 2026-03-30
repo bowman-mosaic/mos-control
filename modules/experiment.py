@@ -1,7 +1,7 @@
 """
 Experiment utilities — save / load experiment configurations and coordinated
 stop-all.  Protocol execution is handled independently by modules.pumps
-(pump_run_protocol) and modules.camera (camera_run_protocol); the frontend
+(pump_run_protocol) and modules.coolsnap (camera capture); the frontend
 starts both at the same time to synchronise them.
 """
 
@@ -56,16 +56,17 @@ def experiment_delete_saved(name):
 
 @expose
 def experiment_stop_all():
-    """Stop every running pump protocol and the camera protocol."""
+    """Stop every running pump protocol and camera capture."""
     from modules import pumps as _p
-    from modules import camera as _c
+    from modules import coolsnap as _cs
     for i in range(4):
         try:
             _p.pump_stop_protocol(i)
         except Exception:
             pass
     try:
-        _c.camera_stop_protocol()
+        _cs.live_stop()
+        _cs.capture_stop()
     except Exception:
         pass
     return {"ok": True}

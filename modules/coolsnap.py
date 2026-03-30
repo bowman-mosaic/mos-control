@@ -66,6 +66,20 @@ _frame_event = threading.Event()
 _circ_buf = None
 _circ_buf_size = 0
 
+# Display range / auto-brightness
+# Modes: "auto" = continuous EMA-smoothed percentile stretch (default)
+#         "locked" = frozen min/max from last auto-adjust
+_disp_mode = "auto"
+_disp_vmin = 0.0
+_disp_vmax = 65535.0
+_disp_gamma = 1.0         # gamma correction: >1 darkens midtones, <1 brightens
+_DISP_EMA_ALPHA = 0.25    # smoothing factor: lower = more stable, higher = more responsive
+_DISP_LO_PCT = 1.0        # low percentile for auto-stretch
+_DISP_HI_PCT = 99.0       # high percentile for auto-stretch
+
+_gamma_lut = None          # cached uint8 LUT for current gamma value
+_gamma_lut_val = None      # gamma value the LUT was built for
+
 
 class CamError(Exception):
     """Raised when a camera operation fails."""
@@ -75,21 +89,65 @@ class CamError(Exception):
 
 _LIVE_PREVIEW_DIM = 800
 
+def _compute_percentiles(frame, lo_pct=None, hi_pct=None):
+    """Fast percentile computation on a subsampled ravel of the frame."""
+    if lo_pct is None:
+        lo_pct = _DISP_LO_PCT
+    if hi_pct is None:
+        hi_pct = _DISP_HI_PCT
+    flat = frame.ravel()
+    sample = flat[:: max(1, flat.size // 10000)]
+    return float(np.percentile(sample, lo_pct)), float(np.percentile(sample, hi_pct))
+
+
+def _get_gamma_lut(gamma):
+    """Return a uint8[256] lookup table for the given gamma value."""
+    global _gamma_lut, _gamma_lut_val
+    if _gamma_lut_val == gamma and _gamma_lut is not None:
+        return _gamma_lut
+    lut = np.arange(256, dtype=np.float32) / 255.0
+    lut = np.power(lut, gamma)
+    _gamma_lut = (lut * 255).astype(np.uint8)
+    _gamma_lut_val = gamma
+    return _gamma_lut
+
+
 def _normalize_u8(frame, max_dim=_LIVE_PREVIEW_DIM):
-    """Downsample + contrast-stretch a uint16 sensor frame to uint8."""
+    """Downsample + contrast-stretch + gamma-correct a uint16 sensor frame to uint8.
+
+    In 'auto' mode, uses EMA-smoothed percentiles to reduce flicker.
+    In 'locked' mode, uses the frozen _disp_vmin/_disp_vmax values.
+    Gamma correction (>1 darkens midtones) is applied via a fast uint8 LUT.
+    """
+    global _disp_vmin, _disp_vmax
+
     h, w = frame.shape
     scale = max(1, max(h, w) // max_dim) if max_dim else 1
     small = frame[::scale, ::scale] if scale > 1 else frame
 
-    flat = small.ravel()
-    sample = flat[:: max(1, flat.size // 4000)]
-    vmin = float(np.percentile(sample, 0.5))
-    vmax = float(np.percentile(sample, 99.5))
+    if _disp_mode == "auto":
+        lo, hi = _compute_percentiles(small)
+        if hi <= lo:
+            hi = lo + 1
+        alpha = _DISP_EMA_ALPHA
+        if _disp_vmin == 0.0 and _disp_vmax == 65535.0:
+            _disp_vmin, _disp_vmax = lo, hi
+        else:
+            _disp_vmin += alpha * (lo - _disp_vmin)
+            _disp_vmax += alpha * (hi - _disp_vmax)
+
+    vmin, vmax = _disp_vmin, _disp_vmax
     if vmax <= vmin:
         vmax = vmin + 1
 
-    return np.clip((small.astype(np.float32) - vmin) / (vmax - vmin) * 255,
-                    0, 255).astype(np.uint8)
+    u8 = np.clip((small.astype(np.float32) - vmin) / (vmax - vmin) * 255,
+                  0, 255).astype(np.uint8)
+
+    gamma = _disp_gamma
+    if gamma != 1.0:
+        u8 = _get_gamma_lut(gamma)[u8]
+
+    return u8
 
 
 def _frame_to_jpeg_bytes(frame, quality=80, max_dim=_LIVE_PREVIEW_DIM):
@@ -604,3 +662,73 @@ def cam_set_save_dir(path):
 @expose
 def cam_get_save_dir():
     return _save_dir
+
+
+@expose
+def cam_display_mode(mode=None):
+    """Get or set display mode ('auto' or 'locked')."""
+    global _disp_mode
+    if mode is not None:
+        if mode not in ("auto", "locked"):
+            return {"error": "mode must be 'auto' or 'locked'"}
+        _disp_mode = mode
+        if mode == "auto":
+            global _disp_vmin, _disp_vmax
+            _disp_vmin, _disp_vmax = 0.0, 65535.0
+    return {"mode": _disp_mode, "vmin": round(_disp_vmin), "vmax": round(_disp_vmax),
+            "gamma": _disp_gamma}
+
+
+@expose
+def cam_auto_adjust():
+    """One-shot: compute display range from current frame and lock it."""
+    global _disp_mode, _disp_vmin, _disp_vmax
+    jpeg = get_live_jpeg()
+    if jpeg is None:
+        if _hcam is None:
+            return {"error": "Camera not connected"}
+        try:
+            frame = snap()
+        except Exception as e:
+            return {"error": str(e)}
+        lo, hi = _compute_percentiles(frame)
+    else:
+        return {"mode": _disp_mode, "vmin": round(_disp_vmin), "vmax": round(_disp_vmax)}
+    if hi <= lo:
+        hi = lo + 1
+    _disp_vmin, _disp_vmax = lo, hi
+    _disp_mode = "locked"
+    return {"mode": "locked", "vmin": round(lo), "vmax": round(hi), "gamma": _disp_gamma}
+
+
+@expose
+def cam_set_display_range(vmin, vmax):
+    """Manually set display min/max and lock."""
+    global _disp_mode, _disp_vmin, _disp_vmax
+    _disp_vmin = float(vmin)
+    _disp_vmax = float(vmax)
+    _disp_mode = "locked"
+    return {"mode": "locked", "vmin": round(_disp_vmin), "vmax": round(_disp_vmax),
+            "gamma": _disp_gamma}
+
+
+@expose
+def cam_get_display_range():
+    """Return current display range, mode, and gamma."""
+    return {"mode": _disp_mode, "vmin": round(_disp_vmin), "vmax": round(_disp_vmax),
+            "gamma": _disp_gamma}
+
+
+@expose
+def cam_set_gamma(gamma):
+    """Set gamma correction (>1 darkens midtones, <1 brightens). Range: 0.2–5.0."""
+    global _disp_gamma
+    gamma = float(gamma)
+    gamma = max(0.2, min(5.0, gamma))
+    _disp_gamma = round(gamma, 2)
+    return {"gamma": _disp_gamma}
+
+
+@expose
+def cam_get_gamma():
+    return {"gamma": _disp_gamma}

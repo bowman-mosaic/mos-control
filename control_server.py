@@ -19,10 +19,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from modules._api import app
 import modules.pumps                   # noqa: F401
-import modules.camera                  # noqa: F401
 import modules.experiment              # noqa: F401
 import modules.nikon_ti                # noqa: F401
 import modules.coolsnap                # noqa: F401
+import modules.intensilight            # noqa: F401
 
 from flask import Response, jsonify
 from flask_sock import Sock
@@ -81,8 +81,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MOS-11 Control System")
     parser.add_argument("--host", default="0.0.0.0",
                         help="Listen address (default 0.0.0.0)")
-    parser.add_argument("--port", type=int, default=8080,
-                        help="Listen port (default 8080)")
+    parser.add_argument("--port", type=int, default=8081,
+                        help="Listen port (default 8081)")
     args = parser.parse_args()
 
     print("MOS-11 Control System")

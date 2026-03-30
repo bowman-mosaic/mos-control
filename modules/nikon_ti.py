@@ -129,6 +129,15 @@ def _write_param(param, value):
     param.RawValue = value
 
 
+def _ensure_controlled(dev):
+    """Enable software control on a device if it has IsControlled."""
+    try:
+        if dev.IsControlled.RawValue == 0:
+            dev.IsControlled.RawValue = 1
+    except Exception:
+        pass
+
+
 # ── Connection ───────────────────────────────────────────────────────────────
 
 def connect():
@@ -179,14 +188,26 @@ def shutter_get_state():
 # ── Dia lamp (halogen intensity) ────────────────────────────────────────────
 
 def dia_lamp_on():
-    _com_call(lambda: _dev("DiaLamp").On())
+    def _do():
+        dev = _dev("DiaLamp")
+        _ensure_controlled(dev)
+        dev.On()
+    _com_call(_do)
 
 def dia_lamp_off():
-    _com_call(lambda: _dev("DiaLamp").Off())
+    def _do():
+        dev = _dev("DiaLamp")
+        _ensure_controlled(dev)
+        dev.Off()
+    _com_call(_do)
 
 def dia_lamp_set_intensity(value):
     v = int(value)
-    _com_call(lambda: _write_param(_dev("DiaLamp").Value, v))
+    def _do():
+        dev = _dev("DiaLamp")
+        _ensure_controlled(dev)
+        _write_param(dev.Value, v)
+    _com_call(_do)
 
 def dia_lamp_get_intensity():
     return _com_call(lambda: _read_param(_dev("DiaLamp").Value))
@@ -197,7 +218,8 @@ def dia_lamp_get_state():
         return {"on": _read_param(dev.IsOn),
                 "intensity": _read_param(dev.Value),
                 "lower": _read_param(dev.LowerLimit),
-                "upper": _read_param(dev.UpperLimit)}
+                "upper": _read_param(dev.UpperLimit),
+                "controlled": _read_param(dev.IsControlled)}
     return _com_call(_do)
 
 

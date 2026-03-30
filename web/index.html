@@ -321,6 +321,7 @@ option { background:#fff; }
         <span class="indicator" id="indP2"><span class="dot"></span>P3</span>
         <span class="indicator" id="indP3"><span class="dot"></span>P4</span>
         <span class="indicator" id="indScope"><span class="dot"></span>SCOPE</span>
+        <span class="indicator" id="indIL"><span class="dot"></span>IL</span>
         <span class="indicator" id="indCam"><span class="dot"></span>CAM</span>
       </div>
       <button class="btn btn-sm accent" onclick="refreshPorts()">Refresh Ports</button>
@@ -381,9 +382,9 @@ option { background:#fff; }
             </div>
           </div>
 
-          <!-- Halogen Lamp -->
+          <!-- Top Lamp (Halogen / transmitted light from top) -->
           <div class="card">
-            <div class="card-head"><span class="title">Halogen Lamp</span>
+            <div class="card-head"><span class="title">Top Lamp</span>
               <span class="badge" id="scopeLampBadge">-</span></div>
             <div class="section">
               <div class="btn-row">
@@ -401,6 +402,45 @@ option { background:#fff; }
             </div>
           </div>
 
+          <!-- Intensilight (epi-fluorescence, serial) -->
+          <div class="card" id="cardIntensi">
+            <div class="card-head"><span class="title">Intensilight</span>
+              <span class="badge" id="scopeIntensiBadge">Offline</span></div>
+            <div class="section">
+              <div class="field">
+                <label>Port</label>
+                <input type="text" id="ilPort" value="COM6" style="width:70px">
+              </div>
+              <div class="btn-row">
+                <button class="btn green btn-sm" id="ilConn" onclick="ilConnect()">Connect</button>
+                <button class="btn red btn-sm" id="ilDisc" onclick="ilDisconnect()" disabled>Disconnect</button>
+              </div>
+            </div>
+            <div class="section">
+              <div class="section-label">Shutter</div>
+              <div class="btn-row">
+                <button class="btn green btn-sm" onclick="ilShutterOpen()">Open</button>
+                <button class="btn red btn-sm" onclick="ilShutterClose()">Close</button>
+              </div>
+              <div style="margin-top:4px;font-size:11px;color:var(--text3)" id="ilShutterState">-</div>
+            </div>
+            <div class="section">
+              <div class="section-label">ND Filter</div>
+              <div class="field">
+                <select id="ilNdSelect">
+                  <option value="1">ND1 (100%)</option>
+                  <option value="2">ND2 (50%)</option>
+                  <option value="3">ND4 (25%)</option>
+                  <option value="4">ND8 (12.5%)</option>
+                  <option value="5">ND16 (6.25%)</option>
+                  <option value="6">ND32 (3%)</option>
+                </select>
+                <button class="btn btn-sm" onclick="ilNdSet()">Set</button>
+              </div>
+              <div style="margin-top:4px;font-size:11px;color:var(--text3)" id="ilNdState">-</div>
+            </div>
+          </div>
+
           <!-- Objective -->
           <div class="card">
             <div class="card-head"><span class="title">Objective</span>
@@ -408,8 +448,8 @@ option { background:#fff; }
             <div class="section">
               <div class="field">
                 <select id="scopeNosepiece">
-                  <option value="1">1</option><option value="2">2</option><option value="3">3</option>
-                  <option value="4">4</option><option value="5">5</option><option value="6">6</option>
+                  <option value="1">1 – 2×</option><option value="2">2 – 4×</option><option value="3">3 – 4× Fluor</option>
+                  <option value="4">4 – 10×</option><option value="5">5 – 20×</option><option value="6">6 – 40×</option>
                 </select>
                 <button class="btn btn-sm" onclick="scopeSetNosepiece()">Set</button>
               </div>
@@ -423,8 +463,8 @@ option { background:#fff; }
             <div class="section">
               <div class="field">
                 <select id="scopeFilter">
-                  <option value="1">1</option><option value="2">2</option><option value="3">3</option>
-                  <option value="4">4</option><option value="5">5</option><option value="6">6</option>
+                  <option value="1">1 – DIA</option><option value="2">2 – DAPI</option><option value="3">3 – GFP</option>
+                  <option value="4">4 – TxRed</option><option value="5">5 – ---</option><option value="6">6 – ---</option>
                 </select>
                 <button class="btn btn-sm" onclick="scopeSetFilter()">Set</button>
               </div>
@@ -625,13 +665,38 @@ option { background:#fff; }
           </div>
           <div class="live-quick">
             <button class="btn btn-sm" id="liveShutterBtn" onclick="liveToggleShutter()">Shutter: -</button>
-            <button class="btn btn-sm" id="liveLampBtn" onclick="liveToggleLamp()">Lamp: -</button>
+            <button class="btn btn-sm" id="liveLampBtn" onclick="liveToggleLamp()">Top: -</button>
+            <button class="btn btn-sm" id="liveIntensiBtn" onclick="liveToggleIntensi()">IL: -</button>
             <label style="font-size:11px;color:var(--text3);margin-left:8px">Exp:</label>
             <input type="number" id="liveExposure" value="20" min="1" style="width:60px"
                    onchange="scopeSetExposureFrom(this.value)">
             <span style="font-size:11px;color:var(--text3)">ms</span>
             <div style="flex:1"></div>
             <div class="proto-status" id="scopeCamStatus"></div>
+          </div>
+          <div class="live-quick" style="gap:6px;align-items:center">
+            <label style="font-size:11px;color:var(--text3)">Display:</label>
+            <button class="btn btn-sm green" id="dispAutoBtn" onclick="dispSetMode('auto')">Auto</button>
+            <button class="btn btn-sm" id="dispLockBtn" onclick="dispLock()">Lock</button>
+            <span style="font-size:10px;color:var(--text3);margin-left:4px">Min</span>
+            <input type="range" id="dispMinSlider" min="0" max="65535" value="0" step="10"
+                   style="width:80px;accent-color:var(--blue)"
+                   oninput="dispSliderChanged()"
+                   onchange="dispSliderChanged()">
+            <span id="dispMinVal" style="font-size:10px;min-width:36px">0</span>
+            <span style="font-size:10px;color:var(--text3)">Max</span>
+            <input type="range" id="dispMaxSlider" min="0" max="65535" value="65535" step="10"
+                   style="width:80px;accent-color:var(--blue)"
+                   oninput="dispSliderChanged()"
+                   onchange="dispSliderChanged()">
+            <span id="dispMaxVal" style="font-size:10px;min-width:36px">65535</span>
+            <button class="btn btn-sm" onclick="dispReset()" title="Reset to full range">Full</button>
+            <span style="font-size:10px;color:var(--text3);margin-left:6px">&#947;</span>
+            <input type="range" id="dispGammaSlider" min="0.2" max="5.0" value="1.0" step="0.1"
+                   style="width:70px;accent-color:var(--orange)"
+                   oninput="dispGammaChanged()"
+                   onchange="dispGammaChanged()">
+            <span id="dispGammaVal" style="font-size:10px;min-width:24px">1.0</span>
           </div>
           <div class="filmstrip" id="liveFilmstrip">
             <div style="color:var(--text3);font-size:11px;padding:4px">No captures yet</div>
@@ -660,10 +725,22 @@ option { background:#fff; }
             <label style="font-size:11px;font-weight:600;color:var(--text2)">Zoom</label>
             <input type="range" id="tlZoom" min="5" max="200" value="40"
                    style="width:100px;accent-color:var(--accent)" oninput="tlRender()">
-            <label style="font-size:11px;font-weight:600;color:var(--text2)">Duration</label>
-            <input type="number" id="tlDuration" value="60" min="1" step="1" style="width:60px"
-                   onchange="tlRender()">
-            <span style="font-size:11px;color:var(--text3)">sec</span>
+            <label style="font-size:11px;font-weight:600;color:var(--text2)">Cycle</label>
+            <input type="number" id="tlDuration" value="60" min="1" step="1" style="width:55px"
+                   onchange="tlRender();tlUpdateTotalTime()">
+            <select id="tlDurUnit" style="min-width:44px;font-size:11px" onchange="tlRender();tlUpdateTotalTime()">
+              <option value="s">sec</option>
+              <option value="m" selected>min</option>
+              <option value="h">hr</option>
+            </select>
+            <div class="sep"></div>
+            <label style="font-size:11px;font-weight:600;color:var(--text2)">Repeat</label>
+            <input type="number" id="tlRepeat" value="1" min="1" step="1" style="width:45px"
+                   onchange="tlUpdateTotalTime()">
+            <label style="font-size:11px;display:flex;align-items:center;gap:3px;cursor:pointer">
+              <input type="checkbox" id="tlForever" onchange="tlUpdateTotalTime()"> Forever
+            </label>
+            <span style="font-size:11px;font-weight:600;color:var(--accent)" id="tlTotalTime"></span>
             <div class="tl-progress" id="tlProgress"></div>
           </div>
 
@@ -758,6 +835,8 @@ let _liveWs = null;
 let _fpsPoller = null;
 let _shutterOpen = false;
 let _lampOn = false;
+let _intensiOn = false;
+let _ilConnected = false;
 
 /* ═══════════════════════════════════════════════════════════════════════════
    UTILITIES
@@ -793,6 +872,7 @@ function updateIndicators() {
   }
   document.getElementById("indCam").classList.toggle("on", scopeCamConnected);
   document.getElementById("indScope").classList.toggle("on", scopeTiConnected);
+  document.getElementById("indIL").classList.toggle("on", _ilConnected);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1097,11 +1177,77 @@ async function scopeLampOff() {
 function updateLampBadge() {
   document.getElementById("scopeLampBadge").className = _lampOn ? "badge on" : "badge";
   document.getElementById("scopeLampBadge").textContent = _lampOn ? "On" : "Off";
-  document.getElementById("liveLampBtn").textContent = "Lamp: " + (_lampOn ? "On" : "Off");
+  document.getElementById("liveLampBtn").textContent = "Top: " + (_lampOn ? "On" : "Off");
 }
 async function scopeLampSetIntensity(v) {
   if(!scopeTiConnected) return;
   await api('ti_dia_lamp_set_intensity', parseInt(v));
+}
+
+/* Intensilight (serial) */
+async function ilConnect() {
+  const port = document.getElementById("ilPort").value.trim() || "COM6";
+  const r = await api('il_connect', port);
+  if(r.error){ toast("Intensilight: "+r.error,"error"); return; }
+  _ilConnected = true;
+  document.getElementById("cardIntensi").classList.add("connected");
+  document.getElementById("scopeIntensiBadge").className="badge on";
+  document.getElementById("scopeIntensiBadge").textContent="Online";
+  document.getElementById("ilConn").disabled=true;
+  document.getElementById("ilDisc").disabled=false;
+  updateIndicators();
+  toast("Intensilight connected (v"+r.version+")","success");
+  logMsg("Intensilight connected on "+port,"sys");
+  ilRefresh();
+}
+async function ilDisconnect() {
+  await api('il_disconnect');
+  _ilConnected = false; _intensiOn = false;
+  document.getElementById("cardIntensi").classList.remove("connected");
+  document.getElementById("scopeIntensiBadge").className="badge";
+  document.getElementById("scopeIntensiBadge").textContent="Offline";
+  document.getElementById("ilConn").disabled=false;
+  document.getElementById("ilDisc").disabled=true;
+  document.getElementById("ilShutterState").textContent="-";
+  document.getElementById("ilNdState").textContent="-";
+  updateIndicators();
+  updateIntensiBadge();
+}
+async function ilShutterOpen() {
+  if(!_ilConnected){ toast("Connect Intensilight first","error"); return; }
+  const r = await api('il_shutter_open');
+  if(r.error) toast(r.error,"error");
+  else { _intensiOn=true; updateIntensiBadge(); document.getElementById("ilShutterState").textContent="Open"; }
+}
+async function ilShutterClose() {
+  if(!_ilConnected){ toast("Connect Intensilight first","error"); return; }
+  const r = await api('il_shutter_close');
+  if(r.error) toast(r.error,"error");
+  else { _intensiOn=false; updateIntensiBadge(); document.getElementById("ilShutterState").textContent="Closed"; }
+}
+async function ilNdSet() {
+  if(!_ilConnected){ toast("Connect Intensilight first","error"); return; }
+  const v = parseInt(document.getElementById("ilNdSelect").value);
+  const r = await api('il_nd_set', v);
+  if(r.error) toast(r.error,"error");
+  else document.getElementById("ilNdState").textContent = r.label;
+}
+async function ilRefresh() {
+  if(!_ilConnected) return;
+  const s = await api('il_state');
+  if(!s.connected) return;
+  if(s.shutter_open != null) {
+    _intensiOn = s.shutter_open;
+    updateIntensiBadge();
+    document.getElementById("ilShutterState").textContent = s.shutter_open ? "Open" : "Closed";
+  }
+  if(s.nd_position != null) {
+    document.getElementById("ilNdSelect").value = s.nd_position;
+    document.getElementById("ilNdState").textContent = s.nd_label;
+  }
+}
+function updateIntensiBadge() {
+  document.getElementById("liveIntensiBtn").textContent = "IL: " + (_intensiOn ? "Open" : "Closed");
 }
 
 async function scopeSetNosepiece() {
@@ -1125,12 +1271,14 @@ async function scopeRefreshOptics() {
   const n = await api('ti_nosepiece_get');
   if(n.ok) {
     document.getElementById("scopeNosepiece").value = n.value;
-    document.getElementById("scopeNosepieceCur").textContent = "pos "+n.value;
+    const _objNames = {1:'2×',2:'4×',3:'4× Fluor',4:'10×',5:'20×',6:'40×'};
+    document.getElementById("scopeNosepieceCur").textContent = _objNames[n.value] || ("pos "+n.value);
   }
   const f = await api('ti_filter_get');
   if(f.ok) {
     document.getElementById("scopeFilter").value = f.value;
-    document.getElementById("scopeFilterCur").textContent = "pos "+f.value;
+    const _filtNames = {1:'DIA',2:'DAPI',3:'GFP',4:'TxRed',5:'---',6:'---'};
+    document.getElementById("scopeFilterCur").textContent = _filtNames[f.value] || ("pos "+f.value);
   }
 }
 async function scopeZRefresh() {
@@ -1174,9 +1322,77 @@ async function scopeRefreshTi() {
 /* live quick toggles */
 function liveToggleShutter() { _shutterOpen ? scopeShutterClose() : scopeShutterOpen(); }
 function liveToggleLamp() { _lampOn ? scopeLampOff() : scopeLampOn(); }
+function liveToggleIntensi() { _intensiOn ? ilShutterClose() : ilShutterOpen(); }
 function scopeSetExposureFrom(v) {
   document.getElementById("scopeExposure").value = v;
   scopeSetExposure();
+}
+
+/* Display range / auto-brightness */
+let _dispMode = "auto";
+let _dispPollTimer = null;
+
+async function dispSetMode(mode) {
+  const r = await api('cam_display_mode', mode);
+  if(r.mode) { _dispMode = r.mode; dispUpdateUI(r); }
+}
+async function dispLock() {
+  const r = await api('cam_auto_adjust');
+  if(r.mode) { _dispMode = r.mode; dispUpdateUI(r); }
+}
+async function dispReset() {
+  await api('cam_set_display_range', 0, 65535);
+  await api('cam_set_gamma', 1.0);
+  document.getElementById("dispGammaSlider").value = 1.0;
+  document.getElementById("dispGammaVal").textContent = "1.0";
+  await dispSetMode('auto');
+}
+let _dispGammaDebounce = null;
+function dispGammaChanged() {
+  const g = parseFloat(document.getElementById("dispGammaSlider").value);
+  document.getElementById("dispGammaVal").textContent = g.toFixed(1);
+  clearTimeout(_dispGammaDebounce);
+  _dispGammaDebounce = setTimeout(() => api('cam_set_gamma', g), 100);
+}
+let _dispSliderDebounce = null;
+function dispSliderChanged() {
+  const lo = parseInt(document.getElementById("dispMinSlider").value);
+  const hi = parseInt(document.getElementById("dispMaxSlider").value);
+  document.getElementById("dispMinVal").textContent = lo;
+  document.getElementById("dispMaxVal").textContent = hi;
+  clearTimeout(_dispSliderDebounce);
+  _dispSliderDebounce = setTimeout(async () => {
+    const r = await api('cam_set_display_range', lo, Math.max(lo+1, hi));
+    if(r.mode) { _dispMode = r.mode; dispUpdateButtons(); }
+  }, 150);
+}
+function dispUpdateUI(r) {
+  document.getElementById("dispMinSlider").value = r.vmin;
+  document.getElementById("dispMaxSlider").value = r.vmax;
+  document.getElementById("dispMinVal").textContent = r.vmin;
+  document.getElementById("dispMaxVal").textContent = r.vmax;
+  if (r.gamma !== undefined) {
+    document.getElementById("dispGammaSlider").value = r.gamma;
+    document.getElementById("dispGammaVal").textContent = r.gamma.toFixed(1);
+  }
+  dispUpdateButtons();
+}
+function dispUpdateButtons() {
+  document.getElementById("dispAutoBtn").classList.toggle("green", _dispMode==="auto");
+  document.getElementById("dispLockBtn").classList.toggle("blue", _dispMode==="locked");
+  document.getElementById("dispMinSlider").disabled = _dispMode==="auto";
+  document.getElementById("dispMaxSlider").disabled = _dispMode==="auto";
+}
+function dispStartPolling() {
+  if(_dispPollTimer) return;
+  _dispPollTimer = setInterval(async () => {
+    if(!scopeLiveActive) return;
+    const r = await api('cam_get_display_range');
+    if(r.mode) { _dispMode = r.mode; dispUpdateUI(r); }
+  }, 1000);
+}
+function dispStopPolling() {
+  if(_dispPollTimer) { clearInterval(_dispPollTimer); _dispPollTimer = null; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1253,6 +1469,7 @@ async function scopeSnapSave() {
 async function scopeToggleLive() {
   if(scopeLiveActive) {
     scopeLiveActive = false;
+    dispStopPolling();
     if(_liveWs){ _liveWs.close(); _liveWs=null; }
     await api('cam_live_stop');
     document.getElementById("scopeLiveBtn").classList.remove("green");
@@ -1268,6 +1485,7 @@ async function scopeToggleLive() {
   scopeLiveActive = true;
   document.getElementById("scopeLiveBtn").classList.add("green");
   document.getElementById("scopeLiveBtn").textContent = "Stop Live";
+  dispStartPolling();
 
   const proto = location.protocol==="https:"?"wss:":"ws:";
   _liveWs = new WebSocket(proto+"//"+location.host+"/cam/live");
@@ -1286,6 +1504,7 @@ async function scopeToggleLive() {
   _liveWs.onclose = function() {
     if(scopeLiveActive){
       scopeLiveActive=false;
+      dispStopPolling();
       document.getElementById("scopeLiveBtn").classList.remove("green");
       document.getElementById("scopeLiveBtn").textContent="Live";
       document.getElementById("scopeFps").style.display="none";
@@ -1327,7 +1546,8 @@ function msSavePreset() {
     objective: parseInt(document.getElementById("scopeNosepiece").value),
     filter: parseInt(document.getElementById("scopeFilter").value),
     lightPath: parseInt(document.getElementById("scopeLightPath").value),
-    lampIntensity: parseInt(document.getElementById("scopeLampSlider").value)
+    lampIntensity: parseInt(document.getElementById("scopeLampSlider").value),
+    ilNd: parseInt(document.getElementById("ilNdSelect").value)
   };
   _saveStore("mos11_ms_presets", obj);
   document.getElementById("msPresetName").value = "";
@@ -1343,6 +1563,7 @@ async function msLoadPreset(name) {
   await api('ti_filter_set', p.filter);
   await api('ti_light_path_set', p.lightPath);
   await api('ti_dia_lamp_set_intensity', p.lampIntensity);
+  if(p.ilNd != null && _ilConnected) await api('il_nd_set', p.ilNd);
   scopeRefreshTi();
   toast("Loaded: "+name,"success");
 }
@@ -1360,7 +1581,7 @@ function renderMsPresets() {
     const p = obj[n];
     return `<div class="preset-chip" onclick="msLoadPreset('${n}')">
       <span>${n}</span>
-      <span style="font-size:10px;color:var(--text3)">Obj:${p.objective} F:${p.filter}</span>
+      <span style="font-size:10px;color:var(--text3)">Obj:${({1:'2×',2:'4×',3:'4×F',4:'10×',5:'20×',6:'40×'})[p.objective]||p.objective} F:${p.filter} ND:${p.ilNd??'-'}</span>
       <span class="del" onclick="event.stopPropagation();msDeletePreset('${n}')">&times;</span>
     </div>`;
   }).join("") || '<span style="font-size:11px;color:var(--text3)">No presets saved</span>';
@@ -1471,7 +1692,7 @@ const TL_COLORS = {
   video:'tl-ev-video', stack:'tl-ev-stack', timelapse:'tl-ev-timelapse', pump:'tl-ev-pump'
 };
 const TL_LABELS = {
-  video:'Video', stack:'Image Stack', timelapse:'Timelapse', pump:'Pump'
+  video:'Video', stack:'Preset Stack', timelapse:'Timelapse', pump:'Pump'
 };
 
 function tlSaveEvents() {
@@ -1483,8 +1704,43 @@ function tlSaveLanes() {
 function tlPxPerSec() {
   return parseFloat(document.getElementById("tlZoom").value) || 40;
 }
-function tlTotalSec() {
-  return parseFloat(document.getElementById("tlDuration").value) || 60;
+function tlCycleSec() {
+  const v = parseFloat(document.getElementById("tlDuration").value) || 60;
+  const u = document.getElementById("tlDurUnit").value;
+  return u === 'h' ? v * 3600 : u === 'm' ? v * 60 : v;
+}
+function tlTotalSec() { return tlCycleSec(); }
+function tlRepeatCount() {
+  return document.getElementById("tlForever").checked
+    ? Infinity
+    : (parseInt(document.getElementById("tlRepeat").value) || 1);
+}
+function tlFormatDuration(sec) {
+  if(sec === Infinity) return '\u221e';
+  if(sec >= 3600) {
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  }
+  if(sec >= 60) {
+    const m = Math.floor(sec / 60);
+    const s = Math.round(sec % 60);
+    return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  }
+  return `${Math.round(sec)}s`;
+}
+function tlUpdateTotalTime() {
+  const cycle = tlCycleSec();
+  const reps = tlRepeatCount();
+  const total = reps === Infinity ? Infinity : cycle * reps;
+  const el = document.getElementById("tlTotalTime");
+  if(reps === Infinity) {
+    el.textContent = `Cycle: ${tlFormatDuration(cycle)} \u00d7 \u221e`;
+  } else if(reps === 1) {
+    el.textContent = `Total: ${tlFormatDuration(cycle)}`;
+  } else {
+    el.textContent = `${tlFormatDuration(cycle)} \u00d7 ${reps} = ${tlFormatDuration(total)}`;
+  }
 }
 
 function tlOverlaps(laneId, start, dur, excludeId) {
@@ -1521,9 +1777,9 @@ function tlAddEvent(type) {
     start: safeStart, duration: dur,
     msPreset: '', camPreset: '',
     stackPresets: [],
-    frames: type === 'stack' ? 10 : 1,
+    frames: 1,
     interval: type === 'timelapse' ? 1 : 0,
-    zStart: 0, zEnd: 0, zStep: 1, fps: 30
+    fps: 30
   };
   tlEvents.push(ev); tlSaveEvents();
   tlSelectedId = ev.id; tlRender(); tlOpenEditor(ev);
@@ -1569,10 +1825,24 @@ function tlRemoveLane(laneId) {
 }
 
 /* ── Ruler axis ── */
+function tlTickLabel(t) {
+  if(t >= 3600) {
+    const h = Math.floor(t / 3600);
+    const m = Math.floor((t % 3600) / 60);
+    return m > 0 ? `${h}h${m}m` : `${h}h`;
+  }
+  if(t >= 60) {
+    const m = Math.floor(t / 60);
+    const s = Math.round(t % 60);
+    return s > 0 ? `${m}m${s}s` : `${m}m`;
+  }
+  return t + 's';
+}
+
 function tlDrawAxis() {
   const canvas = document.getElementById("tlAxisCanvas");
   const pps = tlPxPerSec();
-  const total = tlTotalSec();
+  const total = tlCycleSec();
   const w = Math.max(total * pps, 800);
   canvas.width = w; canvas.height = 28;
   canvas.style.width = w + 'px';
@@ -1581,21 +1851,23 @@ function tlDrawAxis() {
   ctx.fillStyle = '#94a3b8'; ctx.strokeStyle = '#cbd5e1';
   ctx.font = '10px Inter, sans-serif'; ctx.textAlign = 'center';
 
-  const majorStep = pps >= 80 ? 1 : pps >= 30 ? 5 : pps >= 12 ? 10 : 30;
-  const minorStep = majorStep <= 1 ? 0.25 : majorStep <= 5 ? 1 : majorStep <= 10 ? 2 : 5;
+  const pxPerMajor = 60;
+  const rawStep = pxPerMajor / pps;
+  const niceSteps = [0.1,0.25,0.5,1,2,5,10,15,30,60,120,300,600,900,1800,3600,7200];
+  let majorStep = niceSteps.find(s => s >= rawStep) || rawStep;
+  const minorDiv = majorStep >= 60 ? 4 : majorStep >= 10 ? 5 : majorStep >= 1 ? 4 : 4;
+  const minorStep = majorStep / minorDiv;
 
-  for(let t = 0; t <= total; t += minorStep) {
+  for(let t = 0; t <= total + minorStep * 0.5; t += minorStep) {
     const x = Math.round(t * pps) + 0.5;
-    const isMajor = Math.abs(t % majorStep) < 0.01 || Math.abs(t % majorStep - majorStep) < 0.01;
+    if(x > w) break;
+    const isMajor = Math.abs(t % majorStep) < 0.001 || Math.abs(t % majorStep - majorStep) < 0.001;
     ctx.beginPath();
     ctx.moveTo(x, isMajor ? 8 : 18);
     ctx.lineTo(x, 28);
     ctx.lineWidth = isMajor ? 1 : 0.5;
     ctx.stroke();
-    if(isMajor) {
-      const label = t >= 60 ? Math.floor(t/60)+'m'+((t%60)?((t%60)+'s'):'') : t+'s';
-      ctx.fillText(label, x, 15);
-    }
+    if(isMajor) ctx.fillText(tlTickLabel(Math.round(t * 100) / 100), x, 15);
   }
 }
 
@@ -1767,10 +2039,14 @@ function tlOpenEditor(ev) {
       </select>
     </div>`;
   } else {
-    presetCol.style.display = '';
-    tlRefreshEditorDropdowns();
-    document.getElementById("tlEdMsPreset").value = ev.msPreset || '';
-    document.getElementById("tlEdCamPreset").value = ev.camPreset || '';
+    if(ev.type === 'stack') {
+      presetCol.style.display = 'none';
+    } else {
+      presetCol.style.display = '';
+      tlRefreshEditorDropdowns();
+      document.getElementById("tlEdMsPreset").value = ev.msPreset || '';
+      document.getElementById("tlEdCamPreset").value = ev.camPreset || '';
+    }
 
     if(ev.type === 'video') {
       ts.innerHTML = `<div class="field" style="margin:0">
@@ -1782,32 +2058,14 @@ function tlOpenEditor(ev) {
       const acqObj = _loadStore("mos11_acq_presets");
       const acqNames = Object.keys(acqObj);
       const selPresets = ev.stackPresets || [];
-      ts.innerHTML = `<div class="field" style="margin:0">
-        <label>Z start</label>
-        <input type="number" id="tlEdZStart" value="${ev.zStart||0}" step="0.1"
-               style="width:60px" oninput="tlEditorChanged()">
-        <span style="font-size:10px;color:var(--text3)">µm</span>
-      </div>
-      <div class="field" style="margin:0">
-        <label>Z end</label>
-        <input type="number" id="tlEdZEnd" value="${ev.zEnd||0}" step="0.1"
-               style="width:60px" oninput="tlEditorChanged()">
-        <span style="font-size:10px;color:var(--text3)">µm</span>
-      </div>
-      <div class="field" style="margin:0">
-        <label>Z step</label>
-        <input type="number" id="tlEdZStep" value="${ev.zStep||1}" min="0.1" step="0.1"
-               style="width:60px" oninput="tlEditorChanged()">
-        <span style="font-size:10px;color:var(--text3)">µm</span>
-      </div>
-      <div style="margin-top:4px">
+      ts.innerHTML = `<div style="margin-bottom:4px">
         <label style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px">
-          Cycle presets per Z-slice</label>
+          Acquisition presets to cycle</label>
         <select id="tlEdStackPresets" multiple onchange="tlEditorChanged()"
-                style="width:100%;min-height:50px;font-size:11px;margin-top:4px">
+                style="width:100%;min-height:60px;font-size:11px;margin-top:4px">
           ${acqNames.map(n => `<option value="${n}" ${selPresets.includes(n)?'selected':''}>${n}</option>`).join('')}
         </select>
-        <span style="font-size:10px;color:var(--text3)">Ctrl+click to select multiple. Each Z-slice captures once per selected preset.</span>
+        <span style="font-size:10px;color:var(--text3)">Ctrl+click to select multiple. Captures one image per preset in order.</span>
       </div>`;
     } else {
       ts.innerHTML = `<div class="field" style="margin:0">
@@ -1857,18 +2115,14 @@ function tlEditorChanged() {
     const lane = tlLanes.find(l => l.id === ev.laneId);
     if(lane) ev.pumpIdx = lane.pumpIdx;
   } else {
-    ev.msPreset = document.getElementById("tlEdMsPreset").value;
-    ev.camPreset = document.getElementById("tlEdCamPreset").value;
+    if(ev.type !== 'stack') {
+      ev.msPreset = document.getElementById("tlEdMsPreset").value;
+      ev.camPreset = document.getElementById("tlEdCamPreset").value;
+    }
     const fps = document.getElementById("tlEdFps");
     if(fps) ev.fps = parseInt(fps.value) || 30;
     const frames = document.getElementById("tlEdFrames");
     if(frames) ev.frames = parseInt(frames.value) || 1;
-    const zs = document.getElementById("tlEdZStart");
-    if(zs) ev.zStart = parseFloat(zs.value) || 0;
-    const ze = document.getElementById("tlEdZEnd");
-    if(ze) ev.zEnd = parseFloat(ze.value) || 0;
-    const zst = document.getElementById("tlEdZStep");
-    if(zst) ev.zStep = parseFloat(zst.value) || 1;
     const intv = document.getElementById("tlEdInterval");
     if(intv) ev.interval = parseFloat(intv.value) || 1;
 
@@ -1906,6 +2160,7 @@ async function tlApplyMsPreset(presetName) {
   await api('ti_filter_set', p.filter);
   await api('ti_light_path_set', p.lightPath);
   if(p.lampIntensity != null) await api('ti_dia_lamp_set_intensity', p.lampIntensity);
+  if(p.ilNd != null) await api('il_nd_set', p.ilNd);
 }
 
 async function tlApplyCamPreset(presetName) {
@@ -1937,20 +2192,20 @@ function tlSleep(ms) {
   });
 }
 
-async function tlPlay() {
-  if(!tlEvents.length){ toast("Add events to timeline first","error"); return; }
-  tlRunning = true; tlPaused = false; tlAbort = false;
-  document.getElementById("tlPlayBtn").disabled = true;
-  document.getElementById("tlPauseBtn").disabled = false;
-  document.getElementById("tlStopBtn").disabled = false;
-  const progress = document.getElementById("tlProgress");
-
-  const sorted = [...tlEvents].sort((a,b) => a.start - b.start);
+async function tlRunCycle(sorted, progress, running) {
+  const cycleDur = tlCycleSec();
   const pps = tlPxPerSec();
   const ph = document.getElementById("tlPlayhead");
-  const t0 = performance.now();
-  const totalDur = tlTotalSec();
-  const running = new Set();
+  const cycleT0 = performance.now();
+
+  const playheadLoop = () => {
+    if(!tlRunning) return;
+    const elapsed = (performance.now() - cycleT0) / 1000;
+    const pos = (elapsed % cycleDur) * pps;
+    ph.style.left = (56 + pos) + 'px';
+    if(elapsed < cycleDur && !tlAbort) requestAnimationFrame(playheadLoop);
+  };
+  requestAnimationFrame(playheadLoop);
 
   const runEvent = async (ev) => {
     running.add(ev.id);
@@ -1971,7 +2226,6 @@ async function tlPlay() {
       }
     } else {
       await tlApplyPresets(ev);
-
       if(scopeTiConnected) await api('ti_shutter_open');
 
       if(ev.type === 'video') {
@@ -1983,32 +2237,15 @@ async function tlPlay() {
           await tlSleep(1000 / (ev.fps||30));
         }
       } else if(ev.type === 'stack') {
-        const zStep = ev.zStep || 1;
-        const zStart = ev.zStart || 0;
-        const zEnd = ev.zEnd || 0;
-        const slices = zEnd !== zStart
-          ? Math.max(1, Math.floor(Math.abs(zEnd - zStart) / zStep) + 1)
-          : (ev.frames || 10);
-        const presets = ev.stackPresets && ev.stackPresets.length ? ev.stackPresets : null;
-
-        for(let s = 0; s < slices && !tlAbort; s++) {
+        const presets = ev.stackPresets && ev.stackPresets.length ? ev.stackPresets : [];
+        if(!presets.length) {
+          progress.textContent = `${ev.name}: no presets selected`;
+        }
+        for(let pi = 0; pi < presets.length && !tlAbort; pi++) {
           while(tlPaused && !tlAbort) await tlSleep(100);
-
-          if(zEnd !== zStart) {
-            const z = zStart + s * zStep * Math.sign(zEnd - zStart);
-            if(scopeTiConnected) await api('ti_z_set', z);
-          }
-
-          if(presets) {
-            for(let pi = 0; pi < presets.length && !tlAbort; pi++) {
-              progress.textContent = `${ev.name}: Z ${s+1}/${slices} preset ${pi+1}/${presets.length}`;
-              await tlApplyAcqPreset(presets[pi]);
-              await api('cam_snap_save');
-            }
-          } else {
-            progress.textContent = `${ev.name}: slice ${s+1}/${slices}`;
-            await api('cam_snap_save');
-          }
+          progress.textContent = `${ev.name}: preset ${pi+1}/${presets.length} (${presets[pi]})`;
+          await tlApplyAcqPreset(presets[pi]);
+          await api('cam_snap_save');
         }
       } else if(ev.type === 'timelapse') {
         const frames = ev.frames || 10;
@@ -2027,33 +2264,60 @@ async function tlPlay() {
     if(el) el.classList.remove("running");
   };
 
-  const playheadLoop = () => {
-    if(!tlRunning) return;
-    const elapsed = (performance.now() - t0) / 1000;
-    ph.style.left = (56 + elapsed * pps) + 'px';
-    if(elapsed < totalDur) requestAnimationFrame(playheadLoop);
-  };
-  requestAnimationFrame(playheadLoop);
-
   for(const ev of sorted) {
     if(tlAbort) break;
-    const elapsed = (performance.now() - t0) / 1000;
+    const elapsed = (performance.now() - cycleT0) / 1000;
     const wait = ev.start - elapsed;
     if(wait > 0.05) await tlSleep(wait * 1000);
     if(tlAbort) break;
     runEvent(ev);
   }
 
+  const remaining = cycleDur - (performance.now() - cycleT0) / 1000;
+  if(remaining > 0.1 && !tlAbort) await tlSleep(remaining * 1000);
+
   while(running.size > 0 && !tlAbort) await tlSleep(200);
+}
+
+async function tlPlay() {
+  if(!tlEvents.length){ toast("Add events to timeline first","error"); return; }
+  tlRunning = true; tlPaused = false; tlAbort = false;
+  document.getElementById("tlPlayBtn").disabled = true;
+  document.getElementById("tlPauseBtn").disabled = false;
+  document.getElementById("tlStopBtn").disabled = false;
+  const progress = document.getElementById("tlProgress");
+  const ph = document.getElementById("tlPlayhead");
+
+  const sorted = [...tlEvents].sort((a,b) => a.start - b.start);
+  const reps = tlRepeatCount();
+  const cycleDur = tlCycleSec();
+  const running = new Set();
+  const globalT0 = performance.now();
+
+  let cycle = 0;
+  while((cycle < reps || reps === Infinity) && !tlAbort) {
+    cycle++;
+    const cycleLabel = reps === Infinity
+      ? `Cycle ${cycle}`
+      : `Cycle ${cycle}/${reps}`;
+    const elapsed = (performance.now() - globalT0) / 1000;
+    progress.textContent = `${cycleLabel} | Elapsed: ${tlFormatDuration(Math.round(elapsed))}`;
+    logMsg(`Timeline: ${cycleLabel} starting`, "exp");
+
+    await tlRunCycle(sorted, progress, running);
+  }
 
   tlRunning = false;
   ph.style.left = '-10px';
   document.getElementById("tlPlayBtn").disabled = false;
   document.getElementById("tlPauseBtn").disabled = true;
   document.getElementById("tlStopBtn").disabled = true;
-  progress.textContent = tlAbort ? "Stopped" : "Complete";
+  const totalElapsed = (performance.now() - globalT0) / 1000;
+  progress.textContent = tlAbort
+    ? `Stopped after ${cycle} cycles (${tlFormatDuration(Math.round(totalElapsed))})`
+    : `Complete: ${cycle} cycles (${tlFormatDuration(Math.round(totalElapsed))})`;
   if(!tlAbort) toast("Timeline complete","success");
-  logMsg("Timeline " + (tlAbort ? "stopped" : "complete"), "exp");
+  logMsg("Timeline " + (tlAbort ? "stopped" : "complete") + ` after ${cycle} cycles`, "exp");
   tlRender();
 }
 
@@ -2075,6 +2339,7 @@ renderCamPresets();
 renderAcqPresets();
 refreshAcqDropdowns();
 tlRender();
+tlUpdateTotalTime();
 logMsg("MOS-11 Control System ready","sys");
 </script>
 </body>
