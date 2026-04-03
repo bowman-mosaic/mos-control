@@ -278,6 +278,21 @@ option { background:#fff; }
 .tl-editor .ed-grid { display:flex; flex-wrap:wrap; gap:10px 20px; }
 .tl-editor .ed-col { display:flex; flex-direction:column; gap:6px; min-width:140px; }
 
+/* VIEWER */
+.npy-sidebar { width:220px; min-width:180px; max-height:100%; overflow-y:auto;
+               border-right:1px solid var(--border); padding:4px 0; }
+.npy-file { padding:6px 12px; cursor:pointer; border-bottom:1px solid var(--border); }
+.npy-file:hover { background:var(--surface-hover); }
+.npy-file.active { background:var(--blue); color:#fff; }
+.npy-file .fname { font-weight:500; }
+.npy-file .fmeta { font-size:9px; opacity:.7; }
+.npy-preview { flex:1; display:flex; flex-direction:column; align-items:center;
+               justify-content:center; padding:16px; gap:10px; min-width:0; }
+.npy-preview img { max-width:100%; max-height:calc(100vh - 220px); object-fit:contain;
+                   border-radius:4px; background:#000; }
+.npy-controls { display:flex; align-items:center; gap:8px; width:100%; max-width:600px; }
+.npy-controls input[type=range] { flex:1; }
+
 /* LOG */
 .log-container { background:var(--surface); border:1px solid var(--border);
                  border-radius:var(--radius); padding:4px 0;
@@ -341,6 +356,8 @@ option { background:#fff; }
         <span class="nav-icon">&#128065;</span>Live</a>
       <a class="nav-item" data-panel="timeline" onclick="switchPanel('timeline')">
         <span class="nav-icon">&#9202;</span>Timeline</a>
+      <a class="nav-item" data-panel="viewer" onclick="switchPanel('viewer')">
+        <span class="nav-icon">&#128444;</span>Viewer</a>
       <a class="nav-item" data-panel="log" onclick="switchPanel('log')">
         <span class="nav-icon">&#9776;</span>Log</a>
     </nav>
@@ -467,21 +484,6 @@ option { background:#fff; }
                   <option value="4">4 – TxRed</option><option value="5">5 – ---</option><option value="6">6 – ---</option>
                 </select>
                 <button class="btn btn-sm" onclick="scopeSetFilter()">Set</button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Light Path -->
-          <div class="card">
-            <div class="card-head"><span class="title">Light Path</span></div>
-            <div class="section">
-              <div class="field">
-                <select id="scopeLightPath">
-                  <option value="1">1 — Eye</option>
-                  <option value="2">2 — L-cam</option>
-                  <option value="3">3 — R-cam</option>
-                </select>
-                <button class="btn btn-sm" onclick="scopeSetLightPath()">Set</button>
               </div>
             </div>
           </div>
@@ -618,28 +620,24 @@ option { background:#fff; }
             </div>
           </div>
 
-          <!-- Camera Presets -->
-          <div class="card" style="grid-column:1/-1">
-            <div class="card-head"><span class="title">Camera Presets</span></div>
-            <div class="section">
-              <div class="field">
-                <input type="text" id="camPresetName" placeholder="Preset name" style="flex:1;min-width:120px">
-                <button class="btn btn-sm accent" onclick="camSavePreset()">Save Current</button>
-              </div>
-              <div class="preset-list" id="camPresetList"></div>
-            </div>
-          </div>
-
           <!-- Acquisition Presets -->
           <div class="card" style="grid-column:1/-1">
             <div class="card-head"><span class="title">Acquisition Presets</span>
-              <span style="font-size:10px;color:var(--text3)">Microscope + Camera combined</span></div>
+              <span style="font-size:10px;color:var(--text3)">Scope preset + exposure + binning</span></div>
             <div class="section">
               <div class="field">
-                <input type="text" id="acqPresetName" placeholder="Acquisition name" style="flex:1;min-width:100px">
+                <input type="text" id="acqPresetName" placeholder="Preset name" style="flex:1;min-width:100px">
                 <select id="acqMsPreset" style="min-width:100px"><option value="">Scope preset...</option></select>
-                <select id="acqCamPreset" style="min-width:100px"><option value="">Camera preset...</option></select>
-                <button class="btn btn-sm accent" onclick="acqSavePreset()">Create</button>
+                <label style="font-size:10px">Exp (ms)</label>
+                <input type="number" id="acqExposure" value="50" min="1" style="width:70px">
+                <label style="font-size:10px">Bin</label>
+                <select id="acqBinning" style="width:50px">
+                  <option value="1">1×</option>
+                  <option value="2">2×</option>
+                  <option value="4">4×</option>
+                  <option value="8">8×</option>
+                </select>
+                <button class="btn btn-sm accent" onclick="acqSavePreset()">Save</button>
               </div>
               <div class="preset-list" id="acqPresetList"></div>
             </div>
@@ -781,14 +779,8 @@ option { background:#fff; }
               <div class="ed-col" id="tlEdTypeSettings"></div>
               <div class="ed-col" id="tlEdPresetCol">
                 <div class="field" style="margin:0">
-                  <label>Scope</label>
-                  <select id="tlEdMsPreset" onchange="tlEditorChanged()" style="min-width:100px">
-                    <option value="">None</option>
-                  </select>
-                </div>
-                <div class="field" style="margin:0">
-                  <label>Camera</label>
-                  <select id="tlEdCamPreset" onchange="tlEditorChanged()" style="min-width:100px">
+                  <label>Preset</label>
+                  <select id="tlEdAcqPreset" onchange="tlEditorChanged()" style="min-width:120px">
                     <option value="">None</option>
                   </select>
                 </div>
@@ -796,6 +788,52 @@ option { background:#fff; }
             </div>
           </div>
 
+        </div>
+      </section>
+
+      <!-- ════════ VIEWER ════════ -->
+      <section id="panel-viewer" class="panel">
+        <div class="panel-title">Image Viewer</div>
+        <div style="display:flex;height:calc(100vh - 100px)">
+          <div class="npy-sidebar" id="npySidebar">
+            <div style="padding:8px 12px;font-size:11px;color:var(--text3)">No captures yet</div>
+          </div>
+          <div class="npy-preview">
+            <img id="npyImage" alt="preview" style="display:none">
+            <div id="npyPlaceholder" style="font-size:12px;color:var(--text3)">Select a file to preview</div>
+            <div class="npy-controls" id="npyFrameControls" style="display:none">
+              <span style="font-size:11px;color:var(--text3)">Frame:</span>
+              <input type="range" id="npyFrameSlider" min="0" max="0" value="0"
+                     oninput="npyFrameChanged()">
+              <span id="npyFrameLabel" style="font-size:11px;min-width:50px">0 / 0</span>
+            </div>
+            <div id="npyBcgControls" style="display:none;width:100%;max-width:600px">
+              <div class="npy-controls">
+                <span style="font-size:11px;color:var(--text3);min-width:55px">Brightness</span>
+                <input type="range" id="npyBrightness" min="-100" max="100" value="0"
+                       oninput="npyBcgChanged()">
+                <span id="npyBrightnessVal" style="font-size:11px;min-width:32px;text-align:right">0</span>
+              </div>
+              <div class="npy-controls">
+                <span style="font-size:11px;color:var(--text3);min-width:55px">Contrast</span>
+                <input type="range" id="npyContrast" min="1" max="300" value="100"
+                       oninput="npyBcgChanged()">
+                <span id="npyContrastVal" style="font-size:11px;min-width:32px;text-align:right">100</span>
+              </div>
+              <div class="npy-controls">
+                <span style="font-size:11px;color:var(--text3);min-width:55px">Gamma</span>
+                <input type="range" id="npyGamma" min="10" max="500" value="100"
+                       oninput="npyBcgChanged()">
+                <span id="npyGammaVal" style="font-size:11px;min-width:32px;text-align:right">1.0</span>
+              </div>
+              <div style="text-align:right;margin-top:2px;display:flex;gap:6px;justify-content:flex-end">
+                <button class="btn btn-sm accent" onclick="npyAutoAdjust()">Auto</button>
+                <button class="btn btn-sm" onclick="npyBcgReset()">Reset</button>
+                <button class="btn btn-sm" id="npyStackBtn" style="display:none;background:#8b5cf6;border-color:#8b5cf6;color:#fff" onclick="npyStackFrames()">Stack All</button>
+              </div>
+            </div>
+            <div id="npyFileInfo" style="font-size:11px;color:var(--text3)"></div>
+          </div>
         </div>
       </section>
 
@@ -864,6 +902,7 @@ function switchPanel(name) {
     n.classList.toggle("active", n.dataset.panel===name));
   document.querySelectorAll(".panel").forEach(p=>
     p.classList.toggle("active", p.id==="panel-"+name));
+  if(name === 'viewer') npyRefreshList();
 }
 
 function updateIndicators() {
@@ -1262,11 +1301,6 @@ async function scopeSetFilter() {
   const r = await api('ti_filter_set', v);
   if(!r.error) scopeRefreshOptics();
 }
-async function scopeSetLightPath() {
-  if(!scopeTiConnected){ toast("Connect Ti first","error"); return; }
-  const v = parseInt(document.getElementById("scopeLightPath").value);
-  await api('ti_light_path_set', v);
-}
 async function scopeRefreshOptics() {
   const n = await api('ti_nosepiece_get');
   if(n.ok) {
@@ -1545,9 +1579,11 @@ function msSavePreset() {
   obj[name] = {
     objective: parseInt(document.getElementById("scopeNosepiece").value),
     filter: parseInt(document.getElementById("scopeFilter").value),
-    lightPath: parseInt(document.getElementById("scopeLightPath").value),
     lampIntensity: parseInt(document.getElementById("scopeLampSlider").value),
-    ilNd: parseInt(document.getElementById("ilNdSelect").value)
+    lampOn: _lampOn,
+    shutterOpen: _shutterOpen,
+    ilNd: parseInt(document.getElementById("ilNdSelect").value),
+    ilShutterOpen: _intensiOn
   };
   _saveStore("mos11_ms_presets", obj);
   document.getElementById("msPresetName").value = "";
@@ -1559,13 +1595,33 @@ async function msLoadPreset(name) {
   const obj = _loadStore("mos11_ms_presets");
   const p = obj[name]; if(!p) return;
   if(!scopeTiConnected){ toast("Connect Ti first","error"); return; }
-  await api('ti_nosepiece_set', p.objective);
-  await api('ti_filter_set', p.filter);
-  await api('ti_light_path_set', p.lightPath);
-  await api('ti_dia_lamp_set_intensity', p.lampIntensity);
-  if(p.ilNd != null && _ilConnected) await api('il_nd_set', p.ilNd);
+  const tasks = [api('ti_apply_preset', p.objective, p.filter, p.lampIntensity,
+                      p.lampOn != null ? !!p.lampOn : null,
+                      p.shutterOpen != null ? !!p.shutterOpen : null)];
+  if(p.ilNd != null && _ilConnected) tasks.push(api('il_nd_set', p.ilNd));
+  if(p.ilShutterOpen != null && _ilConnected) {
+    tasks.push(p.ilShutterOpen ? api('il_shutter_open') : api('il_shutter_close'));
+  }
+  await Promise.all(tasks);
+  if(p.lampOn != null) { _lampOn = !!p.lampOn; updateLampBadge(); }
+  if(p.shutterOpen != null) { _shutterOpen = !!p.shutterOpen; updateShutterBadge(); }
+  if(p.ilShutterOpen != null) { _intensiOn = !!p.ilShutterOpen; updateIntensiBadge(); document.getElementById("ilShutterState").textContent = _intensiOn ? "Open" : "Closed"; }
   scopeRefreshTi();
   toast("Loaded: "+name,"success");
+}
+function msEditPreset(name) {
+  const obj = _loadStore("mos11_ms_presets");
+  const p = obj[name]; if(!p) return;
+  document.getElementById("msPresetName").value = name;
+  document.getElementById("scopeNosepiece").value = p.objective;
+  document.getElementById("scopeFilter").value = p.filter;
+  document.getElementById("scopeLampSlider").value = p.lampIntensity ?? 2;
+  document.getElementById("scopeLampVal").textContent = p.lampIntensity ?? 2;
+  _lampOn = !!p.lampOn; updateLampBadge();
+  _shutterOpen = !!p.shutterOpen; updateShutterBadge();
+  document.getElementById("ilNdSelect").value = p.ilNd ?? 0;
+  if(p.ilShutterOpen != null) { _intensiOn = !!p.ilShutterOpen; updateIntensiBadge(); }
+  toast("Editing: " + name, "info");
 }
 function msDeletePreset(name) {
   const obj = _loadStore("mos11_ms_presets");
@@ -1577,74 +1633,35 @@ function msDeletePreset(name) {
 function renderMsPresets() {
   const obj = _loadStore("mos11_ms_presets");
   const el = document.getElementById("msPresetList");
+  const objNames = {1:'2×',2:'4×',3:'4×F',4:'10×',5:'20×',6:'40×'};
   el.innerHTML = Object.keys(obj).map(n => {
     const p = obj[n];
-    return `<div class="preset-chip" onclick="msLoadPreset('${n}')">
+    const lamp = p.lampOn ? `Lamp:On/${p.lampIntensity??0}` : `Lamp:Off`;
+    const shtr = p.shutterOpen != null ? (p.shutterOpen ? ' Sh:Open' : ' Sh:Closed') : '';
+    const ilSh = p.ilShutterOpen != null ? (p.ilShutterOpen ? ' IL:Open' : ' IL:Closed') : '';
+    return `<div class="preset-chip" onclick="msEditPreset('${n}')">
       <span>${n}</span>
-      <span style="font-size:10px;color:var(--text3)">Obj:${({1:'2×',2:'4×',3:'4×F',4:'10×',5:'20×',6:'40×'})[p.objective]||p.objective} F:${p.filter} ND:${p.ilNd??'-'}</span>
+      <span style="font-size:10px;color:var(--text3)">Obj:${objNames[p.objective]||p.objective} F:${p.filter} ${lamp}${shtr}${ilSh} ND:${p.ilNd??'-'}</span>
+      <button class="btn btn-sm" onclick="event.stopPropagation();msLoadPreset('${n}')" title="Apply to hardware" style="padding:1px 6px;font-size:9px">Apply</button>
       <span class="del" onclick="event.stopPropagation();msDeletePreset('${n}')">&times;</span>
     </div>`;
   }).join("") || '<span style="font-size:11px;color:var(--text3)">No presets saved</span>';
 }
 
-/* Camera presets */
-function camSavePreset() {
-  const name = document.getElementById("camPresetName").value.trim();
-  if(!name){ toast("Enter a preset name","error"); return; }
-  const obj = _loadStore("mos11_cam_presets");
-  obj[name] = {
-    exposure_ms: parseInt(document.getElementById("scopeExposure").value)||20,
-    binning: parseInt(document.getElementById("scopeBinning").value)||1
-  };
-  _saveStore("mos11_cam_presets", obj);
-  document.getElementById("camPresetName").value = "";
-  renderCamPresets();
-  refreshAcqDropdowns();
-  toast("Camera preset saved","success");
-}
-async function camLoadPreset(name) {
-  const obj = _loadStore("mos11_cam_presets");
-  const p = obj[name]; if(!p) return;
-  document.getElementById("scopeExposure").value = p.exposure_ms;
-  document.getElementById("scopeBinning").value = p.binning;
-  document.getElementById("liveExposure").value = p.exposure_ms;
-  await api('cam_set_exposure', p.exposure_ms);
-  await api('cam_set_binning', p.binning);
-  toast("Loaded: "+name,"success");
-}
-function camDeletePreset(name) {
-  const obj = _loadStore("mos11_cam_presets");
-  delete obj[name];
-  _saveStore("mos11_cam_presets", obj);
-  renderCamPresets();
-  refreshAcqDropdowns();
-}
-function renderCamPresets() {
-  const obj = _loadStore("mos11_cam_presets");
-  const el = document.getElementById("camPresetList");
-  el.innerHTML = Object.keys(obj).map(n => {
-    const p = obj[n];
-    return `<div class="preset-chip" onclick="camLoadPreset('${n}')">
-      <span>${n}</span>
-      <span style="font-size:10px;color:var(--text3)">${p.exposure_ms}ms ${p.binning}x${p.binning}</span>
-      <span class="del" onclick="event.stopPropagation();camDeletePreset('${n}')">&times;</span>
-    </div>`;
-  }).join("") || '<span style="font-size:11px;color:var(--text3)">No presets saved</span>';
-}
-
-/* Acquisition presets (combined) */
+/* Acquisition presets (scope preset + exposure + binning) */
 function acqSavePreset() {
   const name = document.getElementById("acqPresetName").value.trim();
   const ms = document.getElementById("acqMsPreset").value;
-  const cam = document.getElementById("acqCamPreset").value;
+  const exposure = parseInt(document.getElementById("acqExposure").value) || 50;
+  const binning = parseInt(document.getElementById("acqBinning").value) || 1;
   if(!name){ toast("Enter a name","error"); return; }
-  if(!ms||!cam){ toast("Select both scope and camera presets","error"); return; }
+  if(!ms){ toast("Select a scope preset","error"); return; }
   const obj = _loadStore("mos11_acq_presets");
-  obj[name] = { microscopePreset: ms, cameraPreset: cam };
+  obj[name] = { microscopePreset: ms, exposure_ms: exposure, binning: binning };
   _saveStore("mos11_acq_presets", obj);
   document.getElementById("acqPresetName").value = "";
   renderAcqPresets();
-  toast("Acquisition preset created","success");
+  toast("Acquisition preset saved","success");
 }
 function acqDeletePreset(name) {
   const obj = _loadStore("mos11_acq_presets");
@@ -1652,27 +1669,47 @@ function acqDeletePreset(name) {
   _saveStore("mos11_acq_presets", obj);
   renderAcqPresets();
 }
+function acqEditPreset(name) {
+  const obj = _loadStore("mos11_acq_presets");
+  const p = obj[name]; if(!p) return;
+  document.getElementById("acqPresetName").value = name;
+  document.getElementById("acqMsPreset").value = p.microscopePreset || '';
+  document.getElementById("acqExposure").value = p.exposure_ms || 50;
+  document.getElementById("acqBinning").value = p.binning || 1;
+}
+async function acqLoadPreset(name) {
+  const obj = _loadStore("mos11_acq_presets");
+  const p = obj[name]; if(!p) return;
+  document.getElementById("acqPresetName").value = name;
+  document.getElementById("acqExposure").value = p.exposure_ms || 50;
+  document.getElementById("acqBinning").value = p.binning || 1;
+  const tasks = [];
+  if(p.microscopePreset) tasks.push(msLoadPreset(p.microscopePreset));
+  if(scopeCamConnected) {
+    tasks.push(api('cam_set_exposure', p.exposure_ms));
+    tasks.push(api('cam_set_binning', p.binning || 1));
+  }
+  await Promise.all(tasks);
+  toast("Loaded: "+name,"success");
+}
 function renderAcqPresets() {
   const obj = _loadStore("mos11_acq_presets");
   const el = document.getElementById("acqPresetList");
   el.innerHTML = Object.keys(obj).map(n => {
     const p = obj[n];
-    return `<div class="preset-chip">
+    return `<div class="preset-chip" onclick="acqLoadPreset('${n}')">
       <span>${n}</span>
-      <span style="font-size:10px;color:var(--text3)">${p.microscopePreset} + ${p.cameraPreset}</span>
-      <span class="del" onclick="acqDeletePreset('${n}')">&times;</span>
+      <span style="font-size:10px;color:var(--text3)">${p.microscopePreset} — ${p.exposure_ms}ms ${p.binning}x</span>
+      <span class="edit" onclick="event.stopPropagation();acqEditPreset('${n}')">&#9998;</span>
+      <span class="del" onclick="event.stopPropagation();acqDeletePreset('${n}')">&times;</span>
     </div>`;
   }).join("") || '<span style="font-size:11px;color:var(--text3)">No acquisition presets</span>';
 }
 function refreshAcqDropdowns() {
   const msObj = _loadStore("mos11_ms_presets");
-  const camObj = _loadStore("mos11_cam_presets");
   const msSel = document.getElementById("acqMsPreset");
-  const camSel = document.getElementById("acqCamPreset");
   msSel.innerHTML = '<option value="">Scope preset...</option>' +
     Object.keys(msObj).map(n=>`<option value="${n}">${n}</option>`).join("");
-  camSel.innerHTML = '<option value="">Camera preset...</option>' +
-    Object.keys(camObj).map(n=>`<option value="${n}">${n}</option>`).join("");
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1768,19 +1805,25 @@ function tlAddEvent(type) {
   const pps = tlPxPerSec();
   const scroll = document.getElementById("tlScroll");
   const startSec = Math.round((scroll.scrollLeft / pps) * 10) / 10;
-  const dur = type === 'timelapse' ? 10 : type === 'video' ? 5 : 2;
   const imgLane = tlLanes.find(l => l.type === 'imaging');
   if(!imgLane) return;
-  const safeStart = tlFindFreeStart(imgLane.id, startSec, dur, null);
   const ev = {
     id: _tlId(), type, laneId: imgLane.id, name: TL_LABELS[type],
-    start: safeStart, duration: dur,
-    msPreset: '', camPreset: '',
+    start: 0, duration: 2,
+    acqPreset: '',
     stackPresets: [],
-    frames: 1,
-    interval: type === 'timelapse' ? 1 : 0,
+    frames: type === 'timelapse' ? 10 : 1,
+    interval: type === 'timelapse' ? 1000 : 0,
     fps: 30
   };
+  if(type === 'timelapse') {
+    ev.duration = tlTimelapseCalcDuration(ev);
+  } else if(type === 'video') {
+    ev._recordDur = 5;
+    ev.duration = ev._recordDur + tlEventOverhead(ev);
+  }
+  const safeStart = tlFindFreeStart(imgLane.id, startSec, ev.duration, null);
+  ev.start = safeStart;
   tlEvents.push(ev); tlSaveEvents();
   tlSelectedId = ev.id; tlRender(); tlOpenEditor(ev);
 }
@@ -1982,14 +2025,21 @@ function _tlStartDrag(e, ev, mode, lane, pps) {
 
 /* ── Editor panel ── */
 function tlRefreshEditorDropdowns() {
-  const msObj = _loadStore("mos11_ms_presets");
-  const camObj = _loadStore("mos11_cam_presets");
-  const msSel = document.getElementById("tlEdMsPreset");
-  const camSel = document.getElementById("tlEdCamPreset");
-  msSel.innerHTML = '<option value="">None</option>' +
-    Object.keys(msObj).map(n=>`<option value="${n}">${n}</option>`).join("");
-  camSel.innerHTML = '<option value="">None</option>' +
-    Object.keys(camObj).map(n=>`<option value="${n}">${n}</option>`).join("");
+  const acqObj = _loadStore("mos11_acq_presets");
+  const acqSel = document.getElementById("tlEdAcqPreset");
+  acqSel.innerHTML = '<option value="">None</option>' +
+    Object.keys(acqObj).map(n=>`<option value="${n}">${n}</option>`).join("");
+}
+
+function tlEventOverhead(ev) {
+  if(ev.type === 'video' || ev.type === 'timelapse') return 3;
+  return 0;
+}
+
+function tlCalcDuration(ev) {
+  if(ev.type === 'stack') return tlStackCalcDuration(ev);
+  const base = ev._recordDur || ev.duration || 1;
+  return base + tlEventOverhead(ev);
 }
 
 function tlOpenEditor(ev) {
@@ -1999,7 +2049,21 @@ function tlOpenEditor(ev) {
   document.getElementById("tlEdTitle").textContent = (TL_LABELS[ev.type]||'Pump') + ': ' + ev.name;
   document.getElementById("tlEdName").value = ev.name;
   document.getElementById("tlEdStart").value = ev.start;
-  document.getElementById("tlEdDur").value = ev.duration;
+  const durField = document.getElementById("tlEdDur").parentElement;
+  if(ev.type === 'stack') {
+    ev.duration = tlStackCalcDuration(ev);
+    durField.style.display = 'none';
+  } else if(ev.type === 'timelapse') {
+    ev.duration = tlTimelapseCalcDuration(ev);
+    durField.style.display = 'none';
+  } else if(ev.type === 'video') {
+    durField.style.display = '';
+    if(!ev._recordDur) ev._recordDur = ev.duration - tlEventOverhead(ev);
+    if(ev._recordDur < 0.1) ev._recordDur = ev.duration;
+  } else {
+    durField.style.display = '';
+  }
+  document.getElementById("tlEdDur").value = ev._recordDur || ev.duration;
 
   const presetCol = document.getElementById("tlEdPresetCol");
   const ts = document.getElementById("tlEdTypeSettings");
@@ -2044,8 +2108,7 @@ function tlOpenEditor(ev) {
     } else {
       presetCol.style.display = '';
       tlRefreshEditorDropdowns();
-      document.getElementById("tlEdMsPreset").value = ev.msPreset || '';
-      document.getElementById("tlEdCamPreset").value = ev.camPreset || '';
+      document.getElementById("tlEdAcqPreset").value = ev.acqPreset || '';
     }
 
     if(ev.type === 'video') {
@@ -2058,29 +2121,97 @@ function tlOpenEditor(ev) {
       const acqObj = _loadStore("mos11_acq_presets");
       const acqNames = Object.keys(acqObj);
       const selPresets = ev.stackPresets || [];
+      let rows = selPresets.map((p, i) => {
+        const a = acqObj[p] || {};
+        return `<tr>
+          <td style="padding:2px 4px">${p}</td>
+          <td style="padding:2px 4px;font-size:10px;color:var(--text3)">${a.exposure_ms||'?'}ms ${a.binning||'?'}x</td>
+          <td style="padding:2px 4px">
+            <button class="btn btn-sm" onclick="tlStackChMove(${i},-1)" style="padding:0 4px">&uarr;</button>
+            <button class="btn btn-sm" onclick="tlStackChMove(${i},1)" style="padding:0 4px">&darr;</button>
+            <button class="btn btn-sm" onclick="tlStackChRemove(${i})" style="padding:0 4px;color:var(--red)">&times;</button>
+          </td>
+        </tr>`;
+      }).join('');
       ts.innerHTML = `<div style="margin-bottom:4px">
         <label style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px">
-          Acquisition presets to cycle</label>
-        <select id="tlEdStackPresets" multiple onchange="tlEditorChanged()"
-                style="width:100%;min-height:60px;font-size:11px;margin-top:4px">
-          ${acqNames.map(n => `<option value="${n}" ${selPresets.includes(n)?'selected':''}>${n}</option>`).join('')}
-        </select>
-        <span style="font-size:10px;color:var(--text3)">Ctrl+click to select multiple. Captures one image per preset in order.</span>
+          Stack Channels</label>
+        <table style="width:100%;font-size:11px;margin:4px 0">${rows || '<tr><td style="color:var(--text3);padding:4px">No channels added</td></tr>'}</table>
+        <div class="field" style="margin:4px 0 0 0">
+          <select id="tlStackAddSel" style="flex:1;font-size:11px">
+            ${acqNames.map(n => `<option value="${n}">${n}</option>`).join('')}
+          </select>
+          <button class="btn btn-sm accent" onclick="tlStackChAdd()">Add</button>
+        </div>
+        <div class="field" style="margin:4px 0 0 0">
+          <label style="font-size:10px"><input type="checkbox" id="tlEdKeepShutter" ${ev.keepShutterOpen?'checked':''} onchange="tlEditorChanged()"> Keep shutter open</label>
+        </div>
       </div>`;
-    } else {
+    } else if(ev.type === 'timelapse') {
+      const tlDurSec = tlTimelapseCalcDuration(ev);
       ts.innerHTML = `<div class="field" style="margin:0">
         <label>Interval</label>
-        <input type="number" id="tlEdInterval" value="${ev.interval||1}" min="0.1" step="0.1"
-               style="width:60px" oninput="tlEditorChanged()">
-        <span style="font-size:10px;color:var(--text3)">sec</span>
+        <input type="number" id="tlEdInterval" value="${ev.interval||1000}" min="1" step="1"
+               style="width:70px" oninput="tlEditorChanged()">
+        <span style="font-size:10px;color:var(--text3)">ms</span>
       </div>
       <div class="field" style="margin:0">
         <label>Frames</label>
         <input type="number" id="tlEdFrames" value="${ev.frames||10}" min="1"
                style="width:60px" oninput="tlEditorChanged()">
+      </div>
+      <div style="font-size:10px;color:var(--text3);margin-top:2px">
+        Duration: ${tlDurSec}s
       </div>`;
     }
   }
+}
+
+function tlStackCalcDuration(ev) {
+  const presets = ev.stackPresets || [];
+  if(!presets.length) return 2;
+  const acqObj = _loadStore("mos11_acq_presets");
+  let total = 0;
+  for(const pn of presets) {
+    const a = acqObj[pn] || {};
+    total += 1.5 + ((a.exposure_ms || 50) / 1000);
+  }
+  return Math.ceil(total);
+}
+
+function tlTimelapseCalcDuration(ev) {
+  const frames = ev.frames || 10;
+  const intervalMs = ev.interval || 1000;
+  const recordSec = (frames - 1) * intervalMs / 1000;
+  return Math.ceil(recordSec + tlEventOverhead(ev));
+}
+
+function tlStackChAdd() {
+  const ev = tlEvents.find(e => e.id === tlSelectedId);
+  if(!ev) return;
+  const sel = document.getElementById("tlStackAddSel");
+  if(!sel || !sel.value) return;
+  if(!ev.stackPresets) ev.stackPresets = [];
+  ev.stackPresets.push(sel.value);
+  ev.duration = tlStackCalcDuration(ev);
+  tlSaveEvents(); tlOpenEditor(ev);
+}
+function tlStackChRemove(idx) {
+  const ev = tlEvents.find(e => e.id === tlSelectedId);
+  if(!ev || !ev.stackPresets) return;
+  ev.stackPresets.splice(idx, 1);
+  ev.duration = tlStackCalcDuration(ev);
+  tlSaveEvents(); tlOpenEditor(ev);
+}
+function tlStackChMove(idx, dir) {
+  const ev = tlEvents.find(e => e.id === tlSelectedId);
+  if(!ev || !ev.stackPresets) return;
+  const newIdx = idx + dir;
+  if(newIdx < 0 || newIdx >= ev.stackPresets.length) return;
+  const tmp = ev.stackPresets[idx];
+  ev.stackPresets[idx] = ev.stackPresets[newIdx];
+  ev.stackPresets[newIdx] = tmp;
+  tlSaveEvents(); tlOpenEditor(ev);
 }
 
 function tlEditorChanged() {
@@ -2089,7 +2220,18 @@ function tlEditorChanged() {
   ev.name = document.getElementById("tlEdName").value || ev.type;
 
   const wantStart = parseFloat(document.getElementById("tlEdStart").value) || 0;
-  const wantDur = parseFloat(document.getElementById("tlEdDur").value) || 1;
+  const edDur = parseFloat(document.getElementById("tlEdDur").value) || 1;
+  let wantDur;
+  if(ev.type === 'stack') {
+    wantDur = tlStackCalcDuration(ev);
+  } else if(ev.type === 'timelapse') {
+    wantDur = tlTimelapseCalcDuration(ev);
+  } else if(ev.type === 'video') {
+    ev._recordDur = edDur;
+    wantDur = edDur + tlEventOverhead(ev);
+  } else {
+    wantDur = edDur;
+  }
   const newLaneId = ev.type === 'pump'
     ? (document.getElementById("tlEdPumpLane")?.value || ev.laneId)
     : ev.laneId;
@@ -2116,18 +2258,17 @@ function tlEditorChanged() {
     if(lane) ev.pumpIdx = lane.pumpIdx;
   } else {
     if(ev.type !== 'stack') {
-      ev.msPreset = document.getElementById("tlEdMsPreset").value;
-      ev.camPreset = document.getElementById("tlEdCamPreset").value;
+      ev.acqPreset = document.getElementById("tlEdAcqPreset").value;
     }
     const fps = document.getElementById("tlEdFps");
     if(fps) ev.fps = parseInt(fps.value) || 30;
     const frames = document.getElementById("tlEdFrames");
     if(frames) ev.frames = parseInt(frames.value) || 1;
     const intv = document.getElementById("tlEdInterval");
-    if(intv) ev.interval = parseFloat(intv.value) || 1;
+    if(intv) ev.interval = parseInt(intv.value) || 1000;
 
-    const sp = document.getElementById("tlEdStackPresets");
-    if(sp) ev.stackPresets = Array.from(sp.selectedOptions).map(o => o.value);
+    const ks = document.getElementById("tlEdKeepShutter");
+    if(ks) ev.keepShutterOpen = ks.checked;
   }
 
   document.getElementById("tlEdTitle").textContent = (TL_LABELS[ev.type]||'Pump') + ': ' + ev.name;
@@ -2156,31 +2297,34 @@ async function tlApplyMsPreset(presetName) {
   const ms = _loadStore("mos11_ms_presets");
   const p = ms[presetName];
   if(!p || !scopeTiConnected) return;
-  await api('ti_nosepiece_set', p.objective);
-  await api('ti_filter_set', p.filter);
-  await api('ti_light_path_set', p.lightPath);
-  if(p.lampIntensity != null) await api('ti_dia_lamp_set_intensity', p.lampIntensity);
-  if(p.ilNd != null) await api('il_nd_set', p.ilNd);
-}
-
-async function tlApplyCamPreset(presetName) {
-  const cam = _loadStore("mos11_cam_presets");
-  const p = cam[presetName];
-  if(!p || !scopeCamConnected) return;
-  await api('cam_set_exposure', p.exposure_ms);
-  await api('cam_set_binning', p.binning);
+  const tasks = [api('ti_apply_preset', p.objective, p.filter,
+                      p.lampIntensity ?? null,
+                      p.lampOn != null ? !!p.lampOn : null,
+                      p.shutterOpen != null ? !!p.shutterOpen : null)];
+  if(p.ilNd != null && _ilConnected) tasks.push(api('il_nd_set', p.ilNd));
+  if(p.ilShutterOpen != null && _ilConnected) {
+    tasks.push(p.ilShutterOpen ? api('il_shutter_open') : api('il_shutter_close'));
+  }
+  await Promise.all(tasks);
+  if(p.lampOn != null) { _lampOn = !!p.lampOn; updateLampBadge(); }
+  if(p.shutterOpen != null) { _shutterOpen = !!p.shutterOpen; updateShutterBadge(); }
+  if(p.ilShutterOpen != null) { _intensiOn = !!p.ilShutterOpen; updateIntensiBadge(); }
 }
 
 async function tlApplyAcqPreset(presetName) {
   const acq = _loadStore("mos11_acq_presets");
   const a = acq[presetName]; if(!a) return;
-  await tlApplyMsPreset(a.microscopePreset);
-  await tlApplyCamPreset(a.cameraPreset);
+  const tasks = [tlApplyMsPreset(a.microscopePreset)];
+  if(scopeCamConnected) {
+    if(a.exposure_ms != null) tasks.push(api('cam_set_exposure', a.exposure_ms));
+    if(a.binning != null) tasks.push(api('cam_set_binning', a.binning));
+  }
+  await Promise.all(tasks);
 }
 
 async function tlApplyPresets(ev) {
-  if(ev.msPreset) await tlApplyMsPreset(ev.msPreset);
-  if(ev.camPreset) await tlApplyCamPreset(ev.camPreset);
+  if(ev.acqPreset) await tlApplyAcqPreset(ev.acqPreset);
+  else if(ev.msPreset) await tlApplyMsPreset(ev.msPreset);
 }
 
 function tlSleep(ms) {
@@ -2207,6 +2351,16 @@ async function tlRunCycle(sorted, progress, running) {
   };
   requestAnimationFrame(playheadLoop);
 
+  let _captureQueue = [];
+  function waitForCapture() {
+    return new Promise(resolve => { _captureQueue.push(resolve); });
+  }
+  const origCapHandler = _eventHandlers["onCamCaptureComplete"];
+  _eventHandlers["onCamCaptureComplete"] = function(filename) {
+    if(_captureQueue.length) _captureQueue.shift()(filename);
+    if(origCapHandler) origCapHandler(filename);
+  };
+
   const runEvent = async (ev) => {
     running.add(ev.id);
     const el = document.querySelector(`.tl-event[data-id="${ev.id}"]`);
@@ -2226,43 +2380,71 @@ async function tlRunCycle(sorted, progress, running) {
       }
     } else {
       await tlApplyPresets(ev);
-      if(scopeTiConnected) await api('ti_shutter_open');
+      await tlSleep(500);
 
-      if(ev.type === 'video') {
-        const frameCount = Math.round(ev.duration * (ev.fps||30));
-        for(let f = 0; f < frameCount && !tlAbort; f++) {
-          while(tlPaused && !tlAbort) await tlSleep(100);
-          progress.textContent = `${ev.name}: frame ${f+1}/${frameCount}`;
-          await api('cam_snap_save');
-          await tlSleep(1000 / (ev.fps||30));
+      try {
+        if(ev.type === 'video') {
+          const fps = ev.fps || 30;
+          const recDur = ev._recordDur || ev.duration;
+          progress.textContent = `${ev.name}: recording ${recDur}s @ ${fps}fps...`;
+          const done = waitForCapture();
+          const r = await api('cam_record_video', null, recDur, fps);
+          if(r.error) logMsg(`Video error: ${r.error}`, "error");
+          else await done;
+        } else if(ev.type === 'stack') {
+          const presetNames = ev.stackPresets && ev.stackPresets.length ? ev.stackPresets : [];
+          if(!presetNames.length) {
+            progress.textContent = `${ev.name}: no presets selected`;
+          } else {
+            progress.textContent = `${ev.name}: capturing ${presetNames.length} channels...`;
+            const acqStore = _loadStore("mos11_acq_presets");
+            const msStore  = _loadStore("mos11_ms_presets");
+            const channels = [];
+            for(const pn of presetNames) {
+              const a = acqStore[pn]; if(!a) continue;
+              const m = msStore[a.microscopePreset] || {};
+              channels.push({
+                objective: m.objective ?? null,
+                filter: m.filter ?? null,
+                lamp_intensity: m.lampIntensity ?? null,
+                lamp_on: m.lampOn != null ? !!m.lampOn : null,
+                shutter_open: m.shutterOpen != null ? !!m.shutterOpen : null,
+                il_shutter_open: m.ilShutterOpen != null ? !!m.ilShutterOpen : null,
+                il_nd: m.ilNd ?? null,
+                exposure_ms: a.exposure_ms ?? null,
+                binning: a.binning ?? 1
+              });
+            }
+            const done = waitForCapture();
+            const r = await api('cam_stack_capture', channels, !!ev.keepShutterOpen);
+            if(r.error) logMsg(`Stack error: ${r.error}`, "error");
+            else await done;
+          }
+        } else if(ev.type === 'timelapse') {
+          const frames = ev.frames || 10;
+          const intervalMs = ev.interval || 1000;
+          const intervalSec = intervalMs / 1000;
+          progress.textContent = `${ev.name}: timelapse ${frames} frames, ${intervalMs}ms interval`;
+          const done = waitForCapture();
+          const r = await api('cam_record_timelapse', frames, intervalSec);
+          if(r.error) logMsg(`Timelapse error: ${r.error}`, "error");
+          else await done;
         }
-      } else if(ev.type === 'stack') {
-        const presets = ev.stackPresets && ev.stackPresets.length ? ev.stackPresets : [];
-        if(!presets.length) {
-          progress.textContent = `${ev.name}: no presets selected`;
-        }
-        for(let pi = 0; pi < presets.length && !tlAbort; pi++) {
-          while(tlPaused && !tlAbort) await tlSleep(100);
-          progress.textContent = `${ev.name}: preset ${pi+1}/${presets.length} (${presets[pi]})`;
-          await tlApplyAcqPreset(presets[pi]);
-          await api('cam_snap_save');
-        }
-      } else if(ev.type === 'timelapse') {
-        const frames = ev.frames || 10;
-        for(let f = 0; f < frames && !tlAbort; f++) {
-          while(tlPaused && !tlAbort) await tlSleep(100);
-          progress.textContent = `${ev.name}: capture ${f+1}/${frames}`;
-          await api('cam_snap_save');
-          if(f < frames - 1) await tlSleep((ev.interval||1) * 1000);
-        }
+      } finally {
+        const off = [];
+        if(scopeTiConnected) { off.push(api('ti_shutter_close')); off.push(api('ti_dia_lamp_off')); }
+        if(_ilConnected) off.push(api('il_shutter_close'));
+        if(off.length) await Promise.all(off);
       }
-
-      if(scopeTiConnected) await api('ti_shutter_close');
     }
 
     running.delete(ev.id);
     if(el) el.classList.remove("running");
   };
+
+  const imgLane = tlLanes.find(l => l.type === 'imaging');
+  const imgLaneId = imgLane ? imgLane.id : null;
+  let imgChain = Promise.resolve();
 
   for(const ev of sorted) {
     if(tlAbort) break;
@@ -2270,13 +2452,19 @@ async function tlRunCycle(sorted, progress, running) {
     const wait = ev.start - elapsed;
     if(wait > 0.05) await tlSleep(wait * 1000);
     if(tlAbort) break;
-    runEvent(ev);
+
+    if(ev.type !== 'pump' && ev.laneId === imgLaneId) {
+      imgChain = imgChain.then(() => runEvent(ev));
+    } else {
+      runEvent(ev);
+    }
   }
 
   const remaining = cycleDur - (performance.now() - cycleT0) / 1000;
   if(remaining > 0.1 && !tlAbort) await tlSleep(remaining * 1000);
 
   while(running.size > 0 && !tlAbort) await tlSleep(200);
+  _eventHandlers["onCamCaptureComplete"] = origCapHandler;
 }
 
 async function tlPlay() {
@@ -2312,6 +2500,18 @@ async function tlPlay() {
   document.getElementById("tlPlayBtn").disabled = false;
   document.getElementById("tlPauseBtn").disabled = true;
   document.getElementById("tlStopBtn").disabled = true;
+
+  if(scopeTiConnected) {
+    const cleanup = [api('ti_shutter_close'), api('ti_dia_lamp_off')];
+    if(_ilConnected) cleanup.push(api('il_shutter_close'));
+    await Promise.all(cleanup);
+    _shutterOpen = false; updateShutterBadge();
+    _lampOn = false; updateLampBadge();
+    _intensiOn = false; updateIntensiBadge();
+    document.getElementById("ilShutterState").textContent = "Closed";
+    logMsg("Timeline: all shutters closed, lamps off", "sys");
+  }
+
   const totalElapsed = (performance.now() - globalT0) / 1000;
   progress.textContent = tlAbort
     ? `Stopped after ${cycle} cycles (${tlFormatDuration(Math.round(totalElapsed))})`
@@ -2335,12 +2535,180 @@ function tlStop() {
 buildPumps();
 refreshPorts();
 renderMsPresets();
-renderCamPresets();
 renderAcqPresets();
 refreshAcqDropdowns();
 tlRender();
 tlUpdateTotalTime();
 logMsg("MOS-11 Control System ready","sys");
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   NPY VIEWER
+   ═══════════════════════════════════════════════════════════════════════════ */
+let _npyCurrentFile = null;
+let _npyDebounce = null;
+
+function npyOpen(filename) {
+  switchPanel('viewer');
+  npyRefreshList(filename);
+}
+
+async function npyRefreshList(autoSelect) {
+  const r = await api('cam_list_captures');
+  const sidebar = document.getElementById("npySidebar");
+  if(!r.files || !r.files.length) {
+    sidebar.innerHTML = '<div style="padding:8px 12px;font-size:11px;color:var(--text3)">No captures found</div>';
+    return;
+  }
+  sidebar.innerHTML = r.files.map(f => {
+    const dims = f.shape.length === 3
+      ? `${f.shape[0]} frames, ${f.shape[2]}×${f.shape[1]}`
+      : f.shape.length === 2 ? `${f.shape[1]}×${f.shape[0]}` : '?';
+    return `<div class="npy-file" data-name="${f.name}" onclick="npySelect('${f.name}')">
+      <span class="fname">${f.name}</span>
+      <span class="fmeta">${dims}</span>
+    </div>`;
+  }).join("");
+
+  if(autoSelect) npySelect(autoSelect);
+}
+
+async function npySelect(filename) {
+  _npyCurrentFile = filename;
+  _npyShowingStack = false;
+  const sb = document.getElementById("npyStackBtn");
+  if(sb) { sb.textContent = "Stack All"; sb.style.background = "#8b5cf6"; }
+  document.querySelectorAll(".npy-file").forEach(el => {
+    el.classList.toggle("active", el.dataset.name === filename);
+  });
+  npyBcgReset(true);
+  document.getElementById("npyBcgControls").style.display = "block";
+  await npyLoadFrame(filename, 0);
+}
+
+function _npyBcgValues() {
+  return {
+    brightness: parseInt(document.getElementById("npyBrightness").value),
+    contrast:   parseInt(document.getElementById("npyContrast").value),
+    gamma:      parseInt(document.getElementById("npyGamma").value) / 100.0
+  };
+}
+
+async function npyLoadFrame(filename, frameIdx) {
+  const bcg = _npyBcgValues();
+  const r = await api('cam_npy_preview', filename, frameIdx,
+                       bcg.brightness, bcg.contrast, bcg.gamma);
+  if(r.error) { document.getElementById("npyFileInfo").textContent = r.error; return; }
+
+  const img = document.getElementById("npyImage");
+  img.src = "data:image/jpeg;base64," + r.image;
+  img.style.display = "block";
+  document.getElementById("npyPlaceholder").style.display = "none";
+
+  const colorLabel = r.color && r.color !== 'none'
+    ? ` — ${r.color.charAt(0).toUpperCase() + r.color.slice(1)}` : '';
+  const dimText = r.shape.length === 3
+    ? `${filename} — ${r.shape[0]} frames, ${r.shape[2]}×${r.shape[1]} px${colorLabel}`
+    : `${filename} — ${r.shape[1]}×${r.shape[0]} px${colorLabel}`;
+  document.getElementById("npyFileInfo").textContent = dimText;
+
+  const controls = document.getElementById("npyFrameControls");
+  const stackBtn = document.getElementById("npyStackBtn");
+  if(r.n_frames > 1) {
+    controls.style.display = "flex";
+    const slider = document.getElementById("npyFrameSlider");
+    slider.max = r.n_frames - 1;
+    slider.value = r.frame_idx;
+    document.getElementById("npyFrameLabel").textContent = `${r.frame_idx + 1} / ${r.n_frames}`;
+    stackBtn.style.display = "";
+  } else {
+    controls.style.display = "none";
+    stackBtn.style.display = "none";
+  }
+}
+
+function npyFrameChanged() {
+  const idx = parseInt(document.getElementById("npyFrameSlider").value);
+  document.getElementById("npyFrameLabel").textContent =
+    `${idx + 1} / ${parseInt(document.getElementById("npyFrameSlider").max) + 1}`;
+  clearTimeout(_npyDebounce);
+  _npyDebounce = setTimeout(() => {
+    if(_npyCurrentFile) npyLoadFrame(_npyCurrentFile, idx);
+  }, 80);
+}
+
+let _npyBcgDebounce;
+function npyBcgChanged() {
+  const b = document.getElementById("npyBrightness").value;
+  const c = document.getElementById("npyContrast").value;
+  const g = (parseInt(document.getElementById("npyGamma").value) / 100).toFixed(2);
+  document.getElementById("npyBrightnessVal").textContent = b;
+  document.getElementById("npyContrastVal").textContent = c;
+  document.getElementById("npyGammaVal").textContent = g;
+  clearTimeout(_npyBcgDebounce);
+  _npyBcgDebounce = setTimeout(() => {
+    if(_npyCurrentFile) {
+      const idx = parseInt(document.getElementById("npyFrameSlider").value) || 0;
+      npyLoadFrame(_npyCurrentFile, idx);
+    }
+  }, 120);
+}
+
+async function npyAutoAdjust() {
+  if(!_npyCurrentFile) return;
+  const idx = parseInt(document.getElementById("npyFrameSlider").value) || 0;
+  const r = await api('cam_npy_auto_adjust', _npyCurrentFile, idx);
+  if(r.error) { toast(r.error, "error"); return; }
+  document.getElementById("npyBrightness").value = r.brightness;
+  document.getElementById("npyContrast").value = r.contrast;
+  document.getElementById("npyGamma").value = r.gamma;
+  document.getElementById("npyBrightnessVal").textContent = r.brightness;
+  document.getElementById("npyContrastVal").textContent = r.contrast;
+  document.getElementById("npyGammaVal").textContent = (r.gamma / 100).toFixed(2);
+  npyLoadFrame(_npyCurrentFile, idx);
+}
+
+function npyBcgReset(skipReload) {
+  document.getElementById("npyBrightness").value = 0;
+  document.getElementById("npyContrast").value = 100;
+  document.getElementById("npyGamma").value = 100;
+  document.getElementById("npyBrightnessVal").textContent = "0";
+  document.getElementById("npyContrastVal").textContent = "100";
+  document.getElementById("npyGammaVal").textContent = "1.0";
+  if(!skipReload && _npyCurrentFile) {
+    const idx = parseInt(document.getElementById("npyFrameSlider").value) || 0;
+    npyLoadFrame(_npyCurrentFile, idx);
+  }
+}
+
+let _npyShowingStack = false;
+async function npyStackFrames() {
+  if(!_npyCurrentFile) return;
+  if(_npyShowingStack) {
+    _npyShowingStack = false;
+    document.getElementById("npyStackBtn").textContent = "Stack All";
+    document.getElementById("npyStackBtn").style.background = "#8b5cf6";
+    const idx = parseInt(document.getElementById("npyFrameSlider").value) || 0;
+    npyLoadFrame(_npyCurrentFile, idx);
+    return;
+  }
+  const bcg = _npyBcgValues();
+  const r = await api('cam_npy_stack', _npyCurrentFile, 'max',
+                       bcg.brightness, bcg.contrast, bcg.gamma);
+  if(r.error) { toast(r.error, "error"); return; }
+  _npyShowingStack = true;
+  document.getElementById("npyStackBtn").textContent = "Single Frame";
+  document.getElementById("npyStackBtn").style.background = "#059669";
+  const img = document.getElementById("npyImage");
+  img.src = "data:image/jpeg;base64," + r.image;
+  document.getElementById("npyFileInfo").textContent =
+    `${_npyCurrentFile} — Max projection of ${r.n_frames} frames, ${r.width}×${r.height} px`;
+}
+
+onEvent("onCamCaptureComplete", function(filename) {
+  if(document.querySelector('[data-panel="viewer"]').classList.contains("active")) {
+    npyRefreshList(filename);
+  }
+});
 </script>
 </body>
 </html>

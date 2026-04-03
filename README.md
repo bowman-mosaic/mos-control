@@ -75,7 +75,7 @@ mos-control/
 | `DiaLamp` | Halogen lamp (intensity + on/off) |
 | `Nosepiece` | Objective turret (positions 1-6) |
 | `FilterBlockCassette1` | Fluorescence filter cassette |
-| `LightPathDrive` | Light path selector (eye / left / right / bottom) |
+| `LightPathDrive` | Light path selector (manual control only) |
 | `ZDrive` | Focus (units: nm) |
 | `XDrive` / `YDrive` | Stage position (units: nm) |
 | `PFSOffset` / `PFSStatus` | Perfect Focus System |

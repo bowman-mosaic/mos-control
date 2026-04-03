@@ -13,6 +13,8 @@ Usage:
 
 import os
 import sys
+import signal
+import atexit
 import argparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -75,6 +77,49 @@ def cam_frame():
 def cam_fps():
     return jsonify({"fps": _cs.get_live_fps(),
                     "active": _cs.live_is_active()})
+
+
+# ── Graceful shutdown ────────────────────────────────────────────────────────
+
+import modules.nikon_ti as _ti
+import modules.coolsnap as _cs_mod
+import modules.intensilight as _il
+import modules.pumps as _pumps_mod
+
+_shutdown_done = False
+
+def _shutdown():
+    global _shutdown_done
+    if _shutdown_done:
+        return
+    _shutdown_done = True
+    print("\nShutting down — disconnecting hardware...")
+
+    for name, fn in [
+        ("CoolSNAP",     _cs_mod.disconnect),
+        ("Nikon Ti",     _ti.disconnect),
+        ("IntensiLight", _il.disconnect),
+    ]:
+        try:
+            fn()
+            print(f"  {name} disconnected")
+        except Exception as e:
+            print(f"  {name} disconnect failed: {e}")
+
+    for i in range(_pumps_mod.NUM_PUMPS):
+        if _pumps_mod._pumps[i] is not None:
+            try:
+                _pumps_mod._pumps[i].close()
+                _pumps_mod._pumps[i] = None
+                print(f"  Pump {i} disconnected")
+            except Exception as e:
+                print(f"  Pump {i} disconnect failed: {e}")
+
+    print("Shutdown complete.")
+
+atexit.register(_shutdown)
+signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 
 
 if __name__ == "__main__":

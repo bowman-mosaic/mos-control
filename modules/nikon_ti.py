@@ -16,7 +16,7 @@ Hardware mapping (inverted microscope — "dia"/transmitted comes from top):
   DiaLamp             Halogen lamp (bottom) — intensity + on/off
   Nosepiece           Objective turret (positions 1–6)
   FilterBlockCassette1  Fluorescence filter cassette
-  LightPathDrive      Eyepiece / port selector
+  LightPathDrive      Eyepiece / port selector (manual control only)
   ZDrive              Focus (nm)
   XDrive / YDrive     Stage (nm)
   PFS                 Perfect Focus System
@@ -40,6 +40,7 @@ except Exception:
 _scope = None
 _com_thread = None
 _cmd_queue = queue.Queue()
+_dia_lamp_intensity = 2
 
 
 class TiError(Exception):
@@ -243,14 +244,49 @@ def filter_set_position(pos):
     _com_call(lambda: _write_param(_dev("FilterBlockCassette1").Position, p))
 
 
-# ── Light path ───────────────────────────────────────────────────────────────
+# ── Batch preset apply ───────────────────────────────────────────────────────
 
-def light_path_get_position():
-    return _com_call(lambda: _read_param(_dev("LightPathDrive").Position))
+def apply_preset(objective=None, filter_pos=None, lamp_intensity=None,
+                 lamp_on=None, shutter_open=None):
+    """Apply multiple microscope settings in a single COM dispatch.
 
-def light_path_set_position(pos):
-    p = int(pos)
-    _com_call(lambda: _write_param(_dev("LightPathDrive").Position, p))
+    Reads back positions after setting to ensure hardware has settled.
+    """
+    global _dia_lamp_intensity
+    def _do():
+        global _dia_lamp_intensity
+        if objective is not None:
+            dev = _dev("Nosepiece")
+            _ensure_controlled(dev)
+            _write_param(dev.Position, int(objective))
+        if filter_pos is not None:
+            dev = _dev("FilterBlockCassette1")
+            _ensure_controlled(dev)
+            _write_param(dev.Position, int(filter_pos))
+        if lamp_intensity is not None:
+            dev = _dev("DiaLamp")
+            _ensure_controlled(dev)
+            _write_param(dev.Value, int(lamp_intensity))
+            _dia_lamp_intensity = int(lamp_intensity)
+        if lamp_on is not None:
+            dev = _dev("DiaLamp")
+            _ensure_controlled(dev)
+            if lamp_on:
+                dev.On()
+            else:
+                dev.Off()
+        if shutter_open is not None:
+            dev = _dev("DiaShutter")
+            _ensure_controlled(dev)
+            if shutter_open:
+                dev.Open()
+            else:
+                dev.Close()
+        if objective is not None:
+            _read_param(_dev("Nosepiece").Position)
+        if filter_pos is not None:
+            _read_param(_dev("FilterBlockCassette1").Position)
+    _com_call(_do)
 
 
 # ── Z drive (focus, units: nm) ──────────────────────────────────────────────
@@ -330,7 +366,6 @@ def get_full_status():
     _try(dia_lamp_get_state, "dia_lamp")
     _try(nosepiece_get_position, "objective")
     _try(filter_get_position, "filter_block")
-    _try(light_path_get_position, "light_path")
     _try(z_get_position, "z_position")
     _try(xy_get_position, "xy_position")
     _try(pfs_get_status, "pfs")
@@ -443,12 +478,10 @@ def ti_filter_set(position):
     return _wrap(filter_set_position, position)
 
 @expose
-def ti_light_path_get():
-    return _wrap(light_path_get_position)
-
-@expose
-def ti_light_path_set(position):
-    return _wrap(light_path_set_position, position)
+def ti_apply_preset(objective=None, filter_pos=None, lamp_intensity=None,
+                    lamp_on=None, shutter_open=None):
+    return _wrap(apply_preset, objective, filter_pos, lamp_intensity, lamp_on,
+                 shutter_open)
 
 @expose
 def ti_z_get():
