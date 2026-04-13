@@ -781,7 +781,10 @@ option { background:#fff; }
                 <div class="field" style="margin:0">
                   <label>Duration</label>
                   <input type="number" id="tlEdDur" min="0.1" step="0.1" style="width:70px" oninput="tlEditorChanged()">
-                  <span style="font-size:11px;color:var(--text3)">sec</span>
+                  <select id="tlEdDurUnit" onchange="tlEditorChanged()" style="min-width:44px;font-size:11px">
+                    <option value="sec">sec</option>
+                    <option value="min">min</option>
+                  </select>
                 </div>
               </div>
               <div class="ed-col" id="tlEdTypeSettings"></div>
@@ -809,12 +812,37 @@ option { background:#fff; }
           <div class="npy-preview">
             <img id="npyImage" alt="preview" style="display:none">
             <div id="npyPlaceholder" style="font-size:12px;color:var(--text3)">Select a file to preview</div>
+
+            <!-- Frame slider row (video + timelapse) -->
             <div class="npy-controls" id="npyFrameControls" style="display:none">
+              <button class="btn btn-sm" id="npyPlayBtn" onclick="npyPlayToggle()" style="min-width:32px;font-size:14px;padding:2px 6px">&#9654;</button>
               <span style="font-size:11px;color:var(--text3)">Frame:</span>
               <input type="range" id="npyFrameSlider" min="0" max="0" value="0"
                      oninput="npyFrameChanged()">
               <span id="npyFrameLabel" style="font-size:11px;min-width:50px">0 / 0</span>
+              <select id="npyPlaySpeed" onchange="npySetPlaySpeed()" style="width:60px;font-size:10px">
+                <option value="5">5 fps</option>
+                <option value="10" selected>10 fps</option>
+                <option value="15">15 fps</option>
+                <option value="30">30 fps</option>
+              </select>
             </div>
+
+            <!-- Channel dropdown row (stack) -->
+            <div class="npy-controls" id="npyChannelControls" style="display:none">
+              <span style="font-size:11px;color:var(--text3)">Channel:</span>
+              <select id="npyChannelSelect" onchange="npyChannelChanged()" style="min-width:120px"></select>
+            </div>
+
+            <!-- Stack timelapse row (navigate across stack files for same channel) -->
+            <div class="npy-controls" id="npyStackTlControls" style="display:none">
+              <span style="font-size:11px;color:var(--text3)">Stack:</span>
+              <input type="range" id="npyStackTlSlider" min="0" max="0" value="0"
+                     oninput="npyStackTlChanged()">
+              <span id="npyStackTlLabel" style="font-size:11px;min-width:60px">1 / 1</span>
+            </div>
+
+            <!-- BCG controls (all types) -->
             <div id="npyBcgControls" style="display:none;width:100%;max-width:600px">
               <div class="npy-controls">
                 <span style="font-size:11px;color:var(--text3);min-width:55px">Brightness</span>
@@ -838,6 +866,7 @@ option { background:#fff; }
                 <button class="btn btn-sm accent" onclick="npyAutoAdjust()">Auto</button>
                 <button class="btn btn-sm" onclick="npyBcgReset()">Reset</button>
                 <button class="btn btn-sm" id="npyStackBtn" style="display:none;background:#8b5cf6;border-color:#8b5cf6;color:#fff" onclick="npyStackFrames()">Stack All</button>
+                <button class="btn btn-sm" id="npyMergeBtn" style="display:none;background:#8b5cf6;border-color:#8b5cf6;color:#fff" onclick="npyMergeChannels()">Merge Channels</button>
               </div>
             </div>
             <div id="npyFileInfo" style="font-size:11px;color:var(--text3)"></div>
@@ -1841,9 +1870,10 @@ function refreshAcqDropdowns() {
 /* ═══════════════════════════════════════════════════════════════════════════
    TIMELINE  –  Number-line with lanes
    ═══════════════════════════════════════════════════════════════════════════ */
-let tlEvents = JSON.parse(localStorage.getItem("mos11_tl_events")||"[]");
-let tlLanes  = JSON.parse(localStorage.getItem("mos11_tl_lanes")||'null')
-               || [{id:"imaging", label:"Imaging", type:"imaging"}, {id:"pump0", label:"Pump 1", type:"pump", pumpIdx:0}];
+let tlEvents = JSON.parse(localStorage.getItem("mos11_tl_events")||"[]").filter(e => e.type !== 'pump');
+let tlLanes  = (JSON.parse(localStorage.getItem("mos11_tl_lanes")||'null')
+               || [{id:"imaging", label:"Imaging", type:"imaging"}])
+               .filter(l => l.type !== 'pump');
 let tlSelectedId = null;
 let tlRunning = false;
 let tlAbort = false;
@@ -2107,7 +2137,7 @@ function tlRender() {
     laneDiv.style.width = (rulerW - 56) + 'px';
     row.appendChild(laneDiv);
 
-    if(lane.type === 'pump' || lane.type === 'cavro') {
+    if(lane.type === 'cavro') {
       const actions = document.createElement("div");
       actions.className = 'tl-lane-actions';
       actions.innerHTML = `<button title="Remove lane" onclick="tlRemoveLane('${lane.id}')">&times;</button>`;
@@ -2281,7 +2311,8 @@ function tlRefreshEditorDropdowns() {
 }
 
 function tlEventOverhead(ev) {
-  if(ev.type === 'video' || ev.type === 'timelapse') return 3;
+  if(ev.type === 'video') return 3;
+  if(ev.type === 'timelapse') return 3;
   return 0;
 }
 
@@ -2312,7 +2343,18 @@ function tlOpenEditor(ev) {
   } else {
     durField.style.display = '';
   }
-  document.getElementById("tlEdDur").value = ev._recordDur || ev.duration;
+  const durUnitSel = document.getElementById("tlEdDurUnit");
+  const rawDur = ev._recordDur || ev.duration;
+  if(ev.type === 'cavro' || ev.type === 'pump') {
+    const useMin = ev._durUnit === 'min' || (!ev._durUnit && rawDur >= 120);
+    durUnitSel.value = useMin ? 'min' : 'sec';
+    document.getElementById("tlEdDur").value = useMin ? +(rawDur / 60).toFixed(2) : rawDur;
+    durUnitSel.style.display = '';
+  } else {
+    durUnitSel.value = 'sec';
+    document.getElementById("tlEdDur").value = rawDur;
+    durUnitSel.style.display = 'none';
+  }
 
   const presetCol = document.getElementById("tlEdPresetCol");
   const ts = document.getElementById("tlEdTypeSettings");
@@ -2472,11 +2514,19 @@ function tlOpenEditor(ev) {
     }
 
     if(ev.type === 'video') {
+      const acqObj = _loadStore("mos11_acq_presets");
+      const a = acqObj[ev.acqPreset] || {};
+      const expMs = a.exposure_ms || null;
+      const maxFps = expMs ? Math.floor(1000 / expMs) : 120;
+      const curFps = ev.fps || 30;
+      const fpsWarn = expMs && curFps > maxFps;
       ts.innerHTML = `<div class="field" style="margin:0">
         <label>FPS</label>
-        <input type="number" id="tlEdFps" value="${ev.fps||30}" min="1" max="120"
-               style="width:60px" oninput="tlEditorChanged()">
-      </div>`;
+        <input type="number" id="tlEdFps" value="${curFps}" min="1" max="120"
+               style="width:60px;${fpsWarn ? 'border-color:var(--red);color:var(--red)' : ''}" oninput="tlEditorChanged()">
+        <span style="font-size:10px;color:var(--text3);margin-left:4px">${expMs ? 'max ' + maxFps : ''}</span>
+      </div>
+      <div id="tlFpsWarn" style="font-size:10px;color:var(--red);margin-top:2px;${fpsWarn ? '' : 'display:none'}">${fpsWarn ? `⚠ ${curFps} fps requires <${Math.ceil(1000/curFps)}ms exposure — preset is ${expMs}ms` : ''}</div>`;
     } else if(ev.type === 'stack') {
       const acqObj = _loadStore("mos11_acq_presets");
       const acqNames = Object.keys(acqObj);
@@ -2581,7 +2631,10 @@ function tlEditorChanged() {
   ev.name = document.getElementById("tlEdName").value || ev.type;
 
   const wantStart = parseFloat(document.getElementById("tlEdStart").value) || 0;
-  const edDur = parseFloat(document.getElementById("tlEdDur").value) || 1;
+  const edDurRaw = parseFloat(document.getElementById("tlEdDur").value) || 1;
+  const durUnit = document.getElementById("tlEdDurUnit").value;
+  const edDur = durUnit === 'min' ? edDurRaw * 60 : edDurRaw;
+  if(ev.type === 'cavro' || ev.type === 'pump') ev._durUnit = durUnit;
   let wantDur;
   if(ev.type === 'stack') {
     wantDur = tlStackCalcDuration(ev);
@@ -2682,8 +2735,9 @@ function tlEditorChanged() {
     }
     if(ev.cavroAction === 'valve') {
       ev.duration = 1;
-      const durEl = document.getElementById("tlEdDuration");
-      if(durEl) durEl.value = ev.duration;
+      ev._durUnit = 'sec';
+      document.getElementById("tlEdDurUnit").value = 'sec';
+      document.getElementById("tlEdDur").value = 1;
     }
     if(ev.cavroAction === 'dispense') {
       const defVelMlS = 1400 / countsPerMl;
@@ -2695,12 +2749,13 @@ function tlEditorChanged() {
       const valveTime = strokes * 0.5;
       const estSec = Math.ceil(pullTime + pushTime + valveTime);
       ev.duration = Math.max(estSec, 1);
+      ev._durUnit = 'sec';
+      document.getElementById("tlEdDurUnit").value = 'sec';
+      document.getElementById("tlEdDur").value = ev.duration;
       if(estEl && !(velMlS && (velMlS < minMlS || velMlS > maxMlS))) {
         const pushOnly = Math.ceil(pushTime);
         estEl.textContent = `~${estSec}s total (pull ~${Math.ceil(pullTime)}s + push ~${pushOnly}s, ${strokes} stroke${strokes>1?'s':''})`;
       }
-      const durEl = document.getElementById("tlEdDuration");
-      if(durEl) durEl.value = ev.duration;
     }
   } else {
     if(ev.type !== 'stack') {
@@ -2712,6 +2767,23 @@ function tlEditorChanged() {
     if(frames) ev.frames = parseInt(frames.value) || 1;
     const intv = document.getElementById("tlEdInterval");
     if(intv) ev.interval = parseInt(intv.value) || 1000;
+
+    if(ev.type === 'video' && fps) {
+      const acqObj = _loadStore("mos11_acq_presets");
+      const a = acqObj[ev.acqPreset] || {};
+      const expMs = a.exposure_ms || null;
+      const maxFps = expMs ? Math.floor(1000 / expMs) : 120;
+      const warn = document.getElementById("tlFpsWarn");
+      if(expMs && ev.fps > maxFps) {
+        fps.style.borderColor = 'var(--red)';
+        fps.style.color = 'var(--red)';
+        if(warn) { warn.style.display = ''; warn.textContent = `⚠ ${ev.fps} fps requires <${Math.ceil(1000/ev.fps)}ms exposure — preset is ${expMs}ms`; }
+      } else {
+        fps.style.borderColor = '';
+        fps.style.color = '';
+        if(warn) warn.style.display = 'none';
+      }
+    }
 
     const ks = document.getElementById("tlEdKeepShutter");
     if(ks) ev.keepShutterOpen = ks.checked;
@@ -3010,6 +3082,8 @@ async function tlPlay() {
     logMsg("Timeline: all shutters closed, lamps off", "sys");
   }
 
+  await api('cam_experiment_end');
+
   const totalElapsed = (performance.now() - globalT0) / 1000;
   progress.textContent = tlAbort
     ? `Stopped after ${cycle} cycles (${tlFormatDuration(Math.round(totalElapsed))})`
@@ -3137,22 +3211,61 @@ async function npyToggleType(el, subdir) {
   }).join("");
 }
 
+/* ── Viewer: type detection ── */
+function _npyFileType(filename, subdir) {
+  if(subdir) {
+    if(subdir.endsWith('/stack') || subdir.endsWith('\\stack')) return 'stack';
+    if(subdir.endsWith('/video') || subdir.endsWith('\\video')) return 'video';
+    if(subdir.endsWith('/timelapse') || subdir.endsWith('\\timelapse')) return 'timelapse';
+  }
+  if(filename.startsWith('stack_')) return 'stack';
+  if(filename.startsWith('video_')) return 'video';
+  if(filename.startsWith('timelapse_')) return 'timelapse';
+  return 'snap';
+}
+
+let _npyFileTypeCache = 'snap';
+let _npyChannelColors = [];
+let _npyStackFiles = [];
+let _npyShowingMerge = false;
+let _npyPlayFps = 10;
+
 function npySelectFile(filename, subdir) {
+  npyPlayStop();
   _npyCurrentFile = filename;
   _npySubdir = subdir;
   _npyShowingStack = false;
-  const sb = document.getElementById("npyStackBtn");
-  if(sb) { sb.textContent = "Stack All"; sb.style.background = "#8b5cf6"; }
+  _npyShowingMerge = false;
+  _npyChannelColors = [];
+  _npyFileTypeCache = _npyFileType(filename, subdir);
+
   document.querySelectorAll(".npy-file").forEach(el => {
     const match = el.dataset.name === filename && (el.dataset.subdir || null) === subdir;
     el.classList.toggle("active", match);
   });
   npyBcgReset(true);
   document.getElementById("npyBcgControls").style.display = "block";
-  npyLoadFrame(filename, 0);
+
+  const ft = _npyFileTypeCache;
+  document.getElementById("npyFrameControls").style.display = (ft === 'video' || ft === 'timelapse') ? 'flex' : 'none';
+  document.getElementById("npyChannelControls").style.display = ft === 'stack' ? 'flex' : 'none';
+  document.getElementById("npyStackTlControls").style.display = 'none';
+  document.getElementById("npyStackBtn").style.display = ft === 'timelapse' ? '' : 'none';
+  document.getElementById("npyStackBtn").textContent = 'Stack All';
+  document.getElementById("npyStackBtn").style.background = '#8b5cf6';
+  document.getElementById("npyMergeBtn").style.display = ft === 'stack' ? '' : 'none';
+  document.getElementById("npyMergeBtn").textContent = 'Merge Channels';
+  document.getElementById("npyMergeBtn").style.background = '#8b5cf6';
+
+  if(ft === 'stack') {
+    npyLoadStackFile(filename, subdir);
+  } else {
+    npyLoadFrame(filename, 0);
+  }
 }
 function npySelect(filename) { npySelectFile(filename, null); }
 
+/* ── BCG helpers ── */
 function _npyBcgValues() {
   return {
     brightness: parseInt(document.getElementById("npyBrightness").value),
@@ -3160,70 +3273,28 @@ function _npyBcgValues() {
     gamma:      parseInt(document.getElementById("npyGamma").value) / 100.0
   };
 }
-
-async function npyLoadFrame(filename, frameIdx) {
-  const bcg = _npyBcgValues();
-  const r = await api('cam_npy_preview', filename, frameIdx,
-                       bcg.brightness, bcg.contrast, bcg.gamma, _npySubdir);
-  if(r.error) { document.getElementById("npyFileInfo").textContent = r.error; return; }
-
-  const img = document.getElementById("npyImage");
-  img.src = "data:image/jpeg;base64," + r.image;
-  img.style.display = "block";
-  document.getElementById("npyPlaceholder").style.display = "none";
-
-  const colorLabel = r.color && r.color !== 'none'
-    ? ` — ${r.color.charAt(0).toUpperCase() + r.color.slice(1)}` : '';
-  const dimText = r.shape.length === 3
-    ? `${filename} — ${r.shape[0]} frames, ${r.shape[2]}×${r.shape[1]} px${colorLabel}`
-    : `${filename} — ${r.shape[1]}×${r.shape[0]} px${colorLabel}`;
-  document.getElementById("npyFileInfo").textContent = dimText;
-
-  const controls = document.getElementById("npyFrameControls");
-  const stackBtn = document.getElementById("npyStackBtn");
-  if(r.n_frames > 1) {
-    controls.style.display = "flex";
-    const slider = document.getElementById("npyFrameSlider");
-    slider.max = r.n_frames - 1;
-    slider.value = r.frame_idx;
-    document.getElementById("npyFrameLabel").textContent = `${r.frame_idx + 1} / ${r.n_frames}`;
-    stackBtn.style.display = "";
-  } else {
-    controls.style.display = "none";
-    stackBtn.style.display = "none";
-  }
+function npyBcgReset(skipReload) {
+  document.getElementById("npyBrightness").value = 0;
+  document.getElementById("npyContrast").value = 100;
+  document.getElementById("npyGamma").value = 100;
+  document.getElementById("npyBrightnessVal").textContent = "0";
+  document.getElementById("npyContrastVal").textContent = "100";
+  document.getElementById("npyGammaVal").textContent = "1.0";
+  if(!skipReload && _npyCurrentFile) npyReloadCurrent();
 }
-
-function npyFrameChanged() {
-  const idx = parseInt(document.getElementById("npyFrameSlider").value);
-  document.getElementById("npyFrameLabel").textContent =
-    `${idx + 1} / ${parseInt(document.getElementById("npyFrameSlider").max) + 1}`;
-  clearTimeout(_npyDebounce);
-  _npyDebounce = setTimeout(() => {
-    if(_npyCurrentFile) npyLoadFrame(_npyCurrentFile, idx);
-  }, 80);
-}
-
 let _npyBcgDebounce;
 function npyBcgChanged() {
-  const b = document.getElementById("npyBrightness").value;
-  const c = document.getElementById("npyContrast").value;
-  const g = (parseInt(document.getElementById("npyGamma").value) / 100).toFixed(2);
-  document.getElementById("npyBrightnessVal").textContent = b;
-  document.getElementById("npyContrastVal").textContent = c;
-  document.getElementById("npyGammaVal").textContent = g;
+  document.getElementById("npyBrightnessVal").textContent = document.getElementById("npyBrightness").value;
+  document.getElementById("npyContrastVal").textContent = document.getElementById("npyContrast").value;
+  document.getElementById("npyGammaVal").textContent = (parseInt(document.getElementById("npyGamma").value) / 100).toFixed(2);
   clearTimeout(_npyBcgDebounce);
-  _npyBcgDebounce = setTimeout(() => {
-    if(_npyCurrentFile) {
-      const idx = parseInt(document.getElementById("npyFrameSlider").value) || 0;
-      npyLoadFrame(_npyCurrentFile, idx);
-    }
-  }, 120);
+  _npyBcgDebounce = setTimeout(() => { if(_npyCurrentFile) npyReloadCurrent(); }, 120);
 }
-
 async function npyAutoAdjust() {
   if(!_npyCurrentFile) return;
-  const idx = parseInt(document.getElementById("npyFrameSlider").value) || 0;
+  const idx = _npyFileTypeCache === 'stack'
+    ? parseInt(document.getElementById("npyChannelSelect").value) || 0
+    : parseInt(document.getElementById("npyFrameSlider").value) || 0;
   const r = await api('cam_npy_auto_adjust', _npyCurrentFile, idx, _npySubdir);
   if(r.error) { toast(r.error, "error"); return; }
   document.getElementById("npyBrightness").value = r.brightness;
@@ -3232,22 +3303,175 @@ async function npyAutoAdjust() {
   document.getElementById("npyBrightnessVal").textContent = r.brightness;
   document.getElementById("npyContrastVal").textContent = r.contrast;
   document.getElementById("npyGammaVal").textContent = (r.gamma / 100).toFixed(2);
-  npyLoadFrame(_npyCurrentFile, idx);
+  npyReloadCurrent();
 }
-
-function npyBcgReset(skipReload) {
-  document.getElementById("npyBrightness").value = 0;
-  document.getElementById("npyContrast").value = 100;
-  document.getElementById("npyGamma").value = 100;
-  document.getElementById("npyBrightnessVal").textContent = "0";
-  document.getElementById("npyContrastVal").textContent = "100";
-  document.getElementById("npyGammaVal").textContent = "1.0";
-  if(!skipReload && _npyCurrentFile) {
+function npyReloadCurrent() {
+  if(!_npyCurrentFile) return;
+  if(_npyShowingStack) { npyStackFrames(); return; }
+  if(_npyShowingMerge) { npyMergeChannels(); return; }
+  if(_npyFileTypeCache === 'stack') {
+    const ch = parseInt(document.getElementById("npyChannelSelect").value) || 0;
+    npyLoadFrame(_npyCurrentFile, ch);
+  } else {
     const idx = parseInt(document.getElementById("npyFrameSlider").value) || 0;
     npyLoadFrame(_npyCurrentFile, idx);
   }
 }
 
+/* ── Frame loading (video / timelapse / single channel view) ── */
+async function npyLoadFrame(filename, frameIdx) {
+  const bcg = _npyBcgValues();
+  const r = await api('cam_npy_preview', filename, frameIdx,
+                       bcg.brightness, bcg.contrast, bcg.gamma, _npySubdir);
+  if(r.error) { document.getElementById("npyFileInfo").textContent = r.error; return; }
+  const img = document.getElementById("npyImage");
+  img.src = "data:image/jpeg;base64," + r.image;
+  img.style.display = "block";
+  document.getElementById("npyPlaceholder").style.display = "none";
+
+  const colorLabel = r.color && r.color !== 'none'
+    ? ` — ${r.color.charAt(0).toUpperCase() + r.color.slice(1)}` : '';
+  const ft = _npyFileTypeCache;
+  let dimText;
+  if(ft === 'stack') {
+    dimText = `${filename} — Ch ${frameIdx+1}/${r.n_frames}${colorLabel}, ${r.width}×${r.height} px`;
+  } else if(r.n_frames > 1) {
+    dimText = `${filename} — ${r.n_frames} frames, ${r.width}×${r.height} px${colorLabel}`;
+  } else {
+    dimText = `${filename} — ${r.width}×${r.height} px${colorLabel}`;
+  }
+  document.getElementById("npyFileInfo").textContent = dimText;
+
+  if(ft === 'video' || ft === 'timelapse') {
+    if(r.n_frames > 1) {
+      document.getElementById("npyFrameControls").style.display = "flex";
+      const slider = document.getElementById("npyFrameSlider");
+      slider.max = r.n_frames - 1;
+      slider.value = r.frame_idx;
+      document.getElementById("npyFrameLabel").textContent = `${r.frame_idx + 1} / ${r.n_frames}`;
+    }
+  }
+}
+
+/* ── Play/pause for video + timelapse ── */
+let _npyPlaying = false;
+
+async function npyPlayToggle() {
+  if(_npyPlaying) { npyPlayStop(); return; }
+  _npyPlaying = true;
+  document.getElementById("npyPlayBtn").innerHTML = '&#9646;&#9646;';
+  const slider = document.getElementById("npyFrameSlider");
+  while(_npyPlaying) {
+    const t0 = performance.now();
+    let idx = parseInt(slider.value) + 1;
+    if(idx > parseInt(slider.max)) idx = 0;
+    slider.value = idx;
+    document.getElementById("npyFrameLabel").textContent =
+      `${idx + 1} / ${parseInt(slider.max) + 1}`;
+    if(_npyCurrentFile) await npyLoadFrame(_npyCurrentFile, idx);
+    if(!_npyPlaying) break;
+    const elapsed = performance.now() - t0;
+    const wait = Math.max(0, (1000 / _npyPlayFps) - elapsed);
+    if(wait > 0) await new Promise(r => setTimeout(r, wait));
+  }
+}
+function npyPlayStop() {
+  _npyPlaying = false;
+  const btn = document.getElementById("npyPlayBtn");
+  if(btn) btn.innerHTML = '&#9654;';
+}
+function npySetPlaySpeed() {
+  _npyPlayFps = parseInt(document.getElementById("npyPlaySpeed").value) || 10;
+}
+
+function npyFrameChanged() {
+  const idx = parseInt(document.getElementById("npyFrameSlider").value);
+  document.getElementById("npyFrameLabel").textContent =
+    `${idx + 1} / ${parseInt(document.getElementById("npyFrameSlider").max) + 1}`;
+  if(_npyPlaying) return;
+  clearTimeout(_npyDebounce);
+  _npyDebounce = setTimeout(() => {
+    if(_npyCurrentFile) npyLoadFrame(_npyCurrentFile, idx);
+  }, 80);
+}
+
+/* ── Stack: load file, populate channel dropdown, load sibling files ── */
+async function npyLoadStackFile(filename, subdir) {
+  const bcg = _npyBcgValues();
+  const r = await api('cam_npy_preview', filename, 0,
+                       bcg.brightness, bcg.contrast, bcg.gamma, subdir);
+  if(r.error) { document.getElementById("npyFileInfo").textContent = r.error; return; }
+
+  const img = document.getElementById("npyImage");
+  img.src = "data:image/jpeg;base64," + r.image;
+  img.style.display = "block";
+  document.getElementById("npyPlaceholder").style.display = "none";
+
+  _npyChannelColors = r.colors || [];
+  const sel = document.getElementById("npyChannelSelect");
+  sel.innerHTML = '';
+  for(let i = 0; i < r.n_frames; i++) {
+    const label = _npyChannelColors[i]
+      ? `${_npyChannelColors[i].charAt(0).toUpperCase() + _npyChannelColors[i].slice(1)}`
+      : `Channel ${i+1}`;
+    sel.innerHTML += `<option value="${i}">${label}</option>`;
+  }
+  sel.value = 0;
+
+  const colorLabel = r.color && r.color !== 'none'
+    ? ` — ${r.color.charAt(0).toUpperCase() + r.color.slice(1)}` : '';
+  document.getElementById("npyFileInfo").textContent =
+    `${filename} — Ch 1/${r.n_frames}${colorLabel}, ${r.width}×${r.height} px`;
+
+  if(subdir) {
+    const lr = await api('cam_list_captures', subdir);
+    _npyStackFiles = (lr && lr.files) ? lr.files.map(f => f.name).filter(n => n.startsWith('stack_')) : [];
+  } else {
+    _npyStackFiles = [];
+  }
+  const tlRow = document.getElementById("npyStackTlControls");
+  if(_npyStackFiles.length > 1) {
+    tlRow.style.display = 'flex';
+    const slider = document.getElementById("npyStackTlSlider");
+    slider.max = _npyStackFiles.length - 1;
+    slider.value = _npyStackFiles.indexOf(filename);
+    if(slider.value < 0) slider.value = 0;
+    document.getElementById("npyStackTlLabel").textContent =
+      `${parseInt(slider.value)+1} / ${_npyStackFiles.length}`;
+  } else {
+    tlRow.style.display = 'none';
+  }
+}
+
+function npyChannelChanged() {
+  if(!_npyCurrentFile) return;
+  _npyShowingMerge = false;
+  document.getElementById("npyMergeBtn").textContent = 'Merge Channels';
+  document.getElementById("npyMergeBtn").style.background = '#8b5cf6';
+  const ch = parseInt(document.getElementById("npyChannelSelect").value) || 0;
+  npyLoadFrame(_npyCurrentFile, ch);
+}
+
+function npyStackTlChanged() {
+  const idx = parseInt(document.getElementById("npyStackTlSlider").value);
+  document.getElementById("npyStackTlLabel").textContent =
+    `${idx+1} / ${_npyStackFiles.length}`;
+  if(_npyStackFiles[idx]) {
+    _npyCurrentFile = _npyStackFiles[idx];
+    document.querySelectorAll(".npy-file").forEach(el => {
+      const match = el.dataset.name === _npyCurrentFile && (el.dataset.subdir || null) === _npySubdir;
+      el.classList.toggle("active", match);
+    });
+    if(_npyShowingMerge) {
+      npyMergeChannels();
+    } else {
+      const ch = parseInt(document.getElementById("npyChannelSelect").value) || 0;
+      npyLoadFrame(_npyCurrentFile, ch);
+    }
+  }
+}
+
+/* ── Timelapse: stack all frames ── */
 let _npyShowingStack = false;
 async function npyStackFrames() {
   if(!_npyCurrentFile) return;
@@ -3255,8 +3479,7 @@ async function npyStackFrames() {
     _npyShowingStack = false;
     document.getElementById("npyStackBtn").textContent = "Stack All";
     document.getElementById("npyStackBtn").style.background = "#8b5cf6";
-    const idx = parseInt(document.getElementById("npyFrameSlider").value) || 0;
-    npyLoadFrame(_npyCurrentFile, idx);
+    npyReloadCurrent();
     return;
   }
   const bcg = _npyBcgValues();
@@ -3270,6 +3493,30 @@ async function npyStackFrames() {
   img.src = "data:image/jpeg;base64," + r.image;
   document.getElementById("npyFileInfo").textContent =
     `${_npyCurrentFile} — Max projection of ${r.n_frames} frames, ${r.width}×${r.height} px`;
+}
+
+/* ── Stack: merge all channels into multi-color composite ── */
+async function npyMergeChannels() {
+  if(!_npyCurrentFile) return;
+  if(_npyShowingMerge && !_npyBcgDebounce) {
+    _npyShowingMerge = false;
+    document.getElementById("npyMergeBtn").textContent = "Merge Channels";
+    document.getElementById("npyMergeBtn").style.background = "#8b5cf6";
+    const ch = parseInt(document.getElementById("npyChannelSelect").value) || 0;
+    npyLoadFrame(_npyCurrentFile, ch);
+    return;
+  }
+  const bcg = _npyBcgValues();
+  const r = await api('cam_npy_stack', _npyCurrentFile, 'color',
+                       bcg.brightness, bcg.contrast, bcg.gamma, _npySubdir);
+  if(r.error) { toast(r.error, "error"); return; }
+  _npyShowingMerge = true;
+  document.getElementById("npyMergeBtn").textContent = "Single Channel";
+  document.getElementById("npyMergeBtn").style.background = "#059669";
+  const img = document.getElementById("npyImage");
+  img.src = "data:image/jpeg;base64," + r.image;
+  document.getElementById("npyFileInfo").textContent =
+    `${_npyCurrentFile} — Multi-color merge of ${r.n_frames} channels, ${r.width}×${r.height} px`;
 }
 
 onEvent("onCamCaptureComplete", function(filename) {

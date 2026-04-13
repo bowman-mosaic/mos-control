@@ -222,17 +222,106 @@ def _timestamp():
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
-def _save_meta(npy_path, colors=None):
-    """Write a sidecar .meta.json with pseudo-color info.
+def _safe(fn):
+    """Call fn(), return result or None on any error/timeout."""
+    try:
+        return fn()
+    except Exception:
+        return None
 
-    colors: optional list of per-frame color names for multi-channel stacks.
-    """
-    meta = {"color": _pseudo_color_name}
+
+def _gather_system_state():
+    """Snapshot all hardware state. Returns None for anything disconnected."""
+    state = {}
+
+    # Camera
+    state["camera"] = {
+        "connected": _hcam is not None,
+        "name": _cam_name_str if _hcam else None,
+        "sensor": [_sensor_w, _sensor_h] if _hcam else None,
+        "bit_depth": _bit_depth if _hcam else None,
+        "exposure_ms": _exposure_ms,
+        "binning": _binning[0],
+        "pseudo_color": _pseudo_color_name,
+        "display_mode": _disp_mode,
+        "display_range": [round(_disp_vmin), round(_disp_vmax)],
+        "gamma": _disp_gamma,
+    }
+
+    # Microscope
+    try:
+        import modules.nikon_ti as ti
+        if ti.is_connected():
+            state["microscope"] = {
+                "connected": True,
+                "objective": _safe(ti.nosepiece_get_position),
+                "filter": _safe(ti.filter_get_position),
+                "shutter": _safe(ti.shutter_get_state),
+                "lamp": _safe(ti.dia_lamp_get_state),
+                "z_nm": _safe(ti.z_get_position),
+                "xy_nm": _safe(ti.xy_get_position),
+                "pfs": _safe(ti.pfs_get_status),
+            }
+        else:
+            state["microscope"] = {"connected": False}
+    except Exception:
+        state["microscope"] = None
+
+    # Intensilight
+    try:
+        import modules.intensilight as il
+        if il.is_connected():
+            state["intensilight"] = _safe(il.get_state)
+        else:
+            state["intensilight"] = {"connected": False}
+    except Exception:
+        state["intensilight"] = None
+
+    # Cavro pumps (read in-memory attrs only — no serial I/O)
+    try:
+        import modules.cavro as cavro
+        pumps = []
+        for i in range(cavro.NUM_CAVRO):
+            p = cavro.get_pump(i)
+            if p is not None:
+                pumps.append({
+                    "index": i,
+                    "address": getattr(p, "address", None),
+                    "syringe_ml": getattr(p, "syringe_volume_ml", None),
+                    "continuous_running": (
+                        cavro._cont_threads[i] is not None
+                        and cavro._cont_threads[i].is_alive()),
+                    "coordinated_running": (
+                        cavro._coord_thread is not None
+                        and cavro._coord_thread.is_alive()
+                        and i in cavro._coord_pump_idxs),
+                })
+            else:
+                pumps.append(None)
+        state["cavro"] = {
+            "connected": cavro._serial is not None,
+            "pumps": pumps,
+        }
+    except Exception:
+        state["cavro"] = None
+
+    return state
+
+
+def _save_meta(npy_path, colors=None, channels=None):
+    """Write a sidecar .meta.json with full system state snapshot."""
+    meta = {
+        "timestamp": datetime.now().isoformat(),
+        "color": _pseudo_color_name,
+    }
     if colors:
         meta["colors"] = colors
+    if channels:
+        meta["channels"] = channels
+    meta["system"] = _gather_system_state()
     try:
         with open(npy_path + ".meta.json", "w") as f:
-            json.dump(meta, f)
+            json.dump(meta, f, indent=2, default=str)
     except Exception:
         pass
 
@@ -542,7 +631,11 @@ def record_video_and_save(num_frames=100, duration_sec=None, fps=None):
 # ── Time-lapse ───────────────────────────────────────────────────────────────
 
 def timelapse(num_frames=10, interval_sec=5.0):
-    """Capture num_frames images at interval_sec apart, return 3-D stack."""
+    """Capture num_frames images at interval_sec apart, return 3-D stack.
+
+    The interval is measured from the START of each frame, so if snap takes
+    300ms and interval is 1s, the wait after snap is only 700ms.
+    """
     if _hcam is None:
         raise CamError("Camera not connected")
 
@@ -551,15 +644,18 @@ def timelapse(num_frames=10, interval_sec=5.0):
     for i in range(num_frames):
         if _capture_stop.is_set():
             break
+        frame_t0 = time.monotonic()
         frame = snap()
         frames.append(frame.copy())
         push_event("onTimelapseProgress", i + 1, num_frames)
         if i < num_frames - 1:
-            deadline = time.monotonic() + interval_sec
-            while time.monotonic() < deadline:
-                if _capture_stop.is_set():
-                    break
-                time.sleep(0.1)
+            remaining = interval_sec - (time.monotonic() - frame_t0)
+            if remaining > 0:
+                deadline = time.monotonic() + remaining
+                while time.monotonic() < deadline:
+                    if _capture_stop.is_set():
+                        break
+                    time.sleep(0.1)
 
     if not frames:
         raise CamError("No frames captured")
@@ -707,7 +803,7 @@ def stack_capture(channels, keep_shutter_open=False):
     _ensure_save_dir()
     path = os.path.join(_save_dir, f"stack_{_timestamp()}.npy")
     np.save(path, stacked)
-    _save_meta(path, colors=colors)
+    _save_meta(path, colors=colors, channels=channels)
     fname = os.path.basename(path)
     push_event("onCamStatus", "idle", f"Saved: {fname}")
     push_event("onCamCaptureComplete", fname)
@@ -726,7 +822,9 @@ def _run_capture(mode, **kwargs):
     """Run a capture task in the background."""
     global _capture_thread
     if _capture_thread and _capture_thread.is_alive():
-        raise CamError("A capture is already in progress")
+        _capture_thread.join(timeout=5)
+        if _capture_thread.is_alive():
+            raise CamError("A capture is already in progress")
     _capture_stop.clear()
     _capture_thread = threading.Thread(
         target=_capture_worker, args=(mode,), kwargs=kwargs, daemon=True)
@@ -737,6 +835,7 @@ def _capture_worker(mode, **kwargs):
     was_live = live_is_active()
     if was_live:
         live_stop()
+    fname = None
     try:
         if mode == "video":
             push_event("onCamStatus", "recording",
@@ -756,12 +855,12 @@ def _capture_worker(mode, **kwargs):
 
         fname = os.path.basename(path)
         push_event("onCamStatus", "idle", f"Saved: {fname}")
-        push_event("onCamCaptureComplete", fname)
     except Exception as e:
         push_event("onCamStatus", "error", str(e))
     finally:
         if was_live:
             live_start()
+        push_event("onCamCaptureComplete", fname)
 
 
 # ── Eel-exposed wrappers ────────────────────────────────────────────────────
@@ -1193,7 +1292,8 @@ def cam_npy_histogram(filename, frame_idx=0, bins=256):
 def cam_npy_stack(filename, mode="max", brightness=0, contrast=100, gamma=1.0, subdir=None):
     """Return a composite of all frames in an .npy file as a base64 JPEG.
 
-    mode: 'max' (max-intensity projection), 'mean' (average), 'sum' (sum clipped).
+    mode: 'max' (max-intensity projection), 'mean' (average), 'sum' (sum clipped),
+          'color' (multi-color merge using per-channel pseudo-colors from meta).
     subdir: optional relative path under _base_save_dir.
     """
     base = os.path.normpath(_base_save_dir) if subdir else os.path.normpath(_save_dir)
@@ -1210,6 +1310,56 @@ def cam_npy_stack(filename, mode="max", brightness=0, contrast=100, gamma=1.0, s
     if arr.ndim != 3 or arr.shape[0] < 2:
         return {"error": "Need a multi-frame file to stack"}
 
+    meta_color = "none"
+    meta_colors = None
+    meta_path = path + ".meta.json"
+    if os.path.isfile(meta_path):
+        try:
+            with open(meta_path) as f:
+                meta = json.load(f)
+            meta_color = meta.get("color", "none")
+            meta_colors = meta.get("colors")
+        except Exception:
+            pass
+
+    brightness, contrast, gamma = float(brightness), float(contrast), float(gamma)
+
+    if mode == "color":
+        h, w = arr.shape[1], arr.shape[2]
+        canvas = np.zeros((h, w, 3), dtype=np.float64)
+        for i in range(arr.shape[0]):
+            frame = arr[i]
+            norm = frame.astype(np.float64) / max(1, frame.max())
+            c_name = (meta_colors[i] if meta_colors and i < len(meta_colors)
+                      else "none")
+            rgb = _PSEUDO_COLOR_MAP.get(c_name)
+            if rgb:
+                for ch in range(3):
+                    canvas[:, :, ch] += norm * (rgb[ch] / 255.0)
+            else:
+                canvas[:, :, 0] += norm
+                canvas[:, :, 1] += norm
+                canvas[:, :, 2] += norm
+        canvas = np.clip(canvas * 255, 0, 255).astype(np.uint8)
+        if _HAS_CV2:
+            bgr = cv2.cvtColor(canvas, cv2.COLOR_RGB2BGR)
+            ok, buf = cv2.imencode(".jpg", bgr,
+                                   [cv2.IMWRITE_JPEG_QUALITY, 90])
+            b64 = base64.b64encode(buf.tobytes()).decode("ascii") if ok else ""
+        elif _HAS_PIL:
+            img = _PILImage.fromarray(canvas, mode="RGB")
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=90)
+            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        else:
+            b64 = ""
+        return {
+            "image": b64,
+            "width": w, "height": h,
+            "n_frames": int(arr.shape[0]),
+            "mode": "color",
+        }
+
     if mode == "mean":
         composite = np.mean(arr, axis=0).astype(arr.dtype)
     elif mode == "sum":
@@ -1218,23 +1368,12 @@ def cam_npy_stack(filename, mode="max", brightness=0, contrast=100, gamma=1.0, s
     else:
         composite = np.max(arr, axis=0)
 
-    meta_color = "none"
-    meta_path = path + ".meta.json"
-    if os.path.isfile(meta_path):
-        try:
-            with open(meta_path) as f:
-                meta = json.load(f)
-            meta_color = meta.get("color", "none")
-        except Exception:
-            pass
-
     global _pseudo_color, _pseudo_color_name
     prev_color, prev_name = _pseudo_color, _pseudo_color_name
     _pseudo_color = _PSEUDO_COLOR_MAP.get(meta_color)
     _pseudo_color_name = meta_color
     try:
-        u8 = _apply_bcg(composite, float(brightness), float(contrast),
-                        float(gamma), max_dim=1200)
+        u8 = _apply_bcg(composite, brightness, contrast, gamma, max_dim=1200)
         if _HAS_CV2:
             if u8.ndim == 3:
                 u8 = cv2.cvtColor(u8, cv2.COLOR_RGB2BGR)
@@ -1340,7 +1479,7 @@ def cam_npy_preview(filename, frame_idx=0, brightness=0, contrast=100, gamma=1.0
             b64 = _frame_to_base64(frame, quality=quality, max_dim=1200)
     finally:
         _pseudo_color, _pseudo_color_name = prev_color, prev_name
-    return {
+    result = {
         "image": b64,
         "width": int(frame.shape[1]),
         "height": int(frame.shape[0]),
@@ -1349,6 +1488,9 @@ def cam_npy_preview(filename, frame_idx=0, brightness=0, contrast=100, gamma=1.0
         "shape": [int(d) for d in arr.shape],
         "color": frame_color,
     }
+    if meta_colors:
+        result["colors"] = meta_colors
+    return result
 
 
 @expose
