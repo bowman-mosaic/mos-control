@@ -390,6 +390,7 @@ option { background:#fff; }
               <button class="btn green btn-sm" id="cavroBusConn" onclick="cavroConnectBus()">Connect Bus</button>
               <button class="btn red btn-sm" id="cavroBusDisc" onclick="cavroDisconnectBus()" disabled>Disconnect</button>
               <button class="btn accent btn-sm" onclick="cavroHomeAll()">Home All</button>
+              <button class="btn red btn-sm" onclick="cavroStopAll()">Stop All</button>
             </div>
           </div>
           <div class="section">
@@ -729,7 +730,7 @@ option { background:#fff; }
             <button class="btn red btn-sm" id="tlStopBtn" onclick="tlStop()" disabled>&#9632; Stop</button>
             <div class="sep"></div>
             <label style="font-size:11px;font-weight:600;color:var(--text2)">Zoom</label>
-            <input type="range" id="tlZoom" min="5" max="200" value="40"
+            <input type="range" id="tlZoom" min="0" max="100" value="30"
                    style="width:100px;accent-color:var(--accent)" oninput="tlRender()">
             <label style="font-size:11px;font-weight:600;color:var(--text2)">Cycle</label>
             <input type="number" id="tlDuration" value="60" min="1" step="1" style="width:55px"
@@ -775,8 +776,7 @@ option { background:#fff; }
                 </div>
                 <div class="field" style="margin:0">
                   <label>Start</label>
-                  <input type="number" id="tlEdStart" min="0" step="0.1" style="width:70px" oninput="tlEditorChanged()">
-                  <span style="font-size:11px;color:var(--text3)">sec</span>
+                  <input type="text" id="tlEdStart" placeholder="00:00" style="width:60px;font-family:monospace" oninput="tlEditorChanged()">
                 </div>
                 <div class="field" style="margin:0">
                   <label>Duration</label>
@@ -1242,6 +1242,13 @@ async function cavroDisconnectBus() {
   document.getElementById("cavroBusDisc").disabled=true;
   for(let i=0;i<NUM_CAVRO;i++) document.getElementById("cStatus"+i).textContent="—";
   updateIndicators();
+}
+
+async function cavroStopAll() {
+  toast("Stopping all pumps...");
+  await api('cavro_stop_all');
+  toast("All pumps stopped","success");
+  cavroRefreshAllStatus();
 }
 
 /* ── Homing ───────────────────────────────────────────────────────────────── */
@@ -1895,7 +1902,14 @@ function tlSaveLanes() {
   localStorage.setItem("mos11_tl_lanes", JSON.stringify(tlLanes));
 }
 function tlPxPerSec() {
-  return parseFloat(document.getElementById("tlZoom").value) || 40;
+  const slider = parseFloat(document.getElementById("tlZoom").value) || 30;
+  const t = slider / 100;
+  const scrollEl = document.getElementById("tlScroll");
+  const viewW = scrollEl ? scrollEl.clientWidth - 56 : 800;
+  const cycleSec = tlCycleSec();
+  const minPps = Math.max(0.5, viewW / cycleSec);
+  const maxPps = 200;
+  return minPps * Math.pow(maxPps / minPps, t);
 }
 function tlCycleSec() {
   const v = parseFloat(document.getElementById("tlDuration").value) || 60;
@@ -1936,16 +1950,36 @@ function tlUpdateTotalTime() {
   }
 }
 
+function _tlCavroConflict(lane, e) {
+  if(!lane || lane.type !== 'cavro' || e.type !== 'cavro') return false;
+  if(e.laneId === lane.id) return true;
+  const eLane = tlLanes.find(l => l.id === e.laneId);
+  if(!eLane || eLane.type !== 'cavro') return false;
+  if(e.cavroAction === 'coordinated' && e.partnerIdx === lane.cavroIdx) return true;
+  if(e.cavroAction === 'continuous' && eLane.cavroIdx === lane.cavroIdx) return true;
+  return false;
+}
+
 function tlOverlaps(laneId, start, dur, excludeId) {
   const end = start + dur;
+  if(end > tlCycleSec()) return true;
   const lane = tlLanes.find(l => l.id === laneId);
   return tlEvents.some(e => {
     if(e.id === excludeId) return false;
     if(!(e.start < end && (e.start + e.duration) > start)) return false;
     if(e.laneId === laneId) return true;
-    if(lane && lane.type === 'cavro' && e.type === 'cavro' &&
-       e.cavroAction === 'coordinated' && e.partnerIdx === lane.cavroIdx)
-      return true;
+    if(_tlCavroConflict(lane, e)) return true;
+    return false;
+  });
+}
+
+function _tlBlockers(laneId, s, dur, excludeId) {
+  const lane = tlLanes.find(l => l.id === laneId);
+  return tlEvents.filter(e => {
+    if(e.id === excludeId) return false;
+    if(!((e.start + e.duration) > s && e.start < (s + dur))) return false;
+    if(e.laneId === laneId) return true;
+    if(_tlCavroConflict(lane, e)) return true;
     return false;
   });
 }
@@ -1954,9 +1988,8 @@ function tlFindFreeStart(laneId, desiredStart, dur, excludeId) {
   let s = desiredStart;
   let attempts = 0;
   while(tlOverlaps(laneId, s, dur, excludeId) && attempts < 200) {
-    const blockers = tlEvents.filter(e =>
-      e.laneId === laneId && e.id !== excludeId && (e.start + e.duration) > s && e.start < (s + dur)
-    );
+    const blockers = _tlBlockers(laneId, s, dur, excludeId);
+    if(!blockers.length) break;
     s = Math.max(...blockers.map(e => e.start + e.duration));
     s = Math.round(s * 20) / 20;
     attempts++;
@@ -2041,7 +2074,7 @@ function tlAddCavroEvent() {
     cavroIdx: cavroLane.cavroIdx || 0,
     cavroAction: 'dispense',
     fromPort: 1, toPort: 2,
-    volume: 0.5, velocity: ''
+    volume: 0.5, velocity: 100, velUnit: 'ulmin'
   };
   tlEvents.push(ev); tlSaveEvents();
   tlSelectedId = ev.id; tlRender(); tlOpenEditor(ev);
@@ -2154,7 +2187,7 @@ function tlRender() {
     );
 
     [...laneEvs, ...coordMirrors.map(e => ({...e, _mirror: true}))].forEach(ev => {
-      const isMirror = ev._mirror;
+      const isMirror = !!ev._mirror;
       const left = ev.start * pps;
       const width = Math.max(ev.duration * pps, 14);
       const colorClass = TL_COLORS[ev.type] || 'tl-ev-pump';
@@ -2163,21 +2196,17 @@ function tlRender() {
       div.style.left = left + 'px';
       div.style.width = width + 'px';
       div.dataset.id = ev.id;
-      if(isMirror) div.style.opacity = '0.6';
+      if(isMirror) div.style.opacity = '0.7';
       let blockLabel = ev.name;
       if(ev.type === 'cavro') {
-        const evLane = tlLanes.find(l => l.id === ev.laneId);
-        const pumpName = evLane ? evLane.label : ('Cavro '+(ev.cavroIdx+1));
         if(ev.cavroAction === 'coordinated') {
-          const partnerLane = tlLanes.find(l => l.type==='cavro' && l.cavroIdx === ev.partnerIdx);
-          const partnerName = partnerLane ? partnerLane.label : ('Cavro '+(ev.partnerIdx+1));
-          blockLabel = isMirror ? `Output [${pumpName}]` : `Input [${partnerName}]`;
+          blockLabel = isMirror ? `${ev.name} (outlet)` : `${ev.name} (inlet)`;
         } else if(ev.cavroAction === 'continuous') {
-          blockLabel = `Cont: ${pumpName}`;
+          blockLabel = `${ev.name} — Cont`;
         } else if(ev.cavroAction === 'dispense') {
-          blockLabel = `Disp: ${pumpName}`;
+          blockLabel = `${ev.name} — Disp`;
         } else if(ev.cavroAction === 'valve') {
-          blockLabel = `Valve: ${pumpName}`;
+          blockLabel = `${ev.name} — Valve`;
         }
       }
       div.innerHTML = `<span class="ev-label">${blockLabel}</span>` +
@@ -2209,6 +2238,28 @@ function tlRender() {
       laneDiv.appendChild(div);
     });
   });
+
+  const cycleSec = tlCycleSec();
+  const stopX = cycleSec * pps + 56;
+  let stopLine = document.getElementById("tlStopLine");
+  if(!stopLine) {
+    stopLine = document.createElement("div");
+    stopLine.id = "tlStopLine";
+    stopLine.style.cssText = 'position:absolute;top:0;bottom:0;width:2px;background:var(--red);z-index:3;pointer-events:none;opacity:0.5';
+    document.getElementById("tlRuler").appendChild(stopLine);
+  }
+  stopLine.style.left = stopX + 'px';
+
+  const beyondW = Math.max(0, rulerW - stopX);
+  let shade = document.getElementById("tlStopShade");
+  if(!shade) {
+    shade = document.createElement("div");
+    shade.id = "tlStopShade";
+    shade.style.cssText = 'position:absolute;top:28px;bottom:0;background:rgba(0,0,0,0.08);z-index:2;pointer-events:none';
+    document.getElementById("tlRuler").appendChild(shade);
+  }
+  shade.style.left = stopX + 'px';
+  shade.style.width = beyondW + 'px';
 }
 
 /* ── Snap-to-edge helpers ── */
@@ -2322,13 +2373,27 @@ function tlCalcDuration(ev) {
   return base + tlEventOverhead(ev);
 }
 
+function _secToMMSS(s) {
+  const m = Math.floor(s / 60);
+  const sec = Math.round(s % 60);
+  return String(m).padStart(2,'0') + ':' + String(sec).padStart(2,'0');
+}
+function _mmssToSec(str) {
+  str = str.trim();
+  if(str.includes(':')) {
+    const [m, s] = str.split(':');
+    return (parseInt(m)||0) * 60 + (parseFloat(s)||0);
+  }
+  return parseFloat(str) || 0;
+}
+
 function tlOpenEditor(ev) {
   const editor = document.getElementById("tlEditor");
   editor.classList.add("open");
   document.getElementById("tlEdDelete").style.display = "";
   document.getElementById("tlEdTitle").textContent = (TL_LABELS[ev.type]||'Pump') + ': ' + ev.name;
   document.getElementById("tlEdName").value = ev.name;
-  document.getElementById("tlEdStart").value = ev.start;
+  document.getElementById("tlEdStart").value = _secToMMSS(ev.start);
   const durField = document.getElementById("tlEdDur").parentElement;
   if(ev.type === 'stack') {
     ev.duration = tlStackCalcDuration(ev);
@@ -2435,8 +2500,8 @@ function tlOpenEditor(ev) {
         <input type="number" id="tlEdCavroVel" value="${ev.velocity||''}" step="0.01"
                placeholder="auto" style="width:60px" oninput="tlEditorChanged()">
         <select id="tlEdCavroVelUnit" onchange="tlEditorChanged()" style="min-width:60px;font-size:10px">
-          <option value="mls" ${(ev.velUnit||'mls')==='mls'?'selected':''}>mL/s</option>
-          <option value="ulmin" ${ev.velUnit==='ulmin'?'selected':''}>µL/min</option>
+          <option value="ulmin" ${(ev.velUnit||'ulmin')==='ulmin'?'selected':''}>µL/min</option>
+          <option value="mls" ${ev.velUnit==='mls'?'selected':''}>mL/s</option>
         </select>
       </div>
       <div style="font-size:10px;color:var(--text3);margin-top:2px" id="tlEdCavroEst"></div>` : ''}
@@ -2454,8 +2519,8 @@ function tlOpenEditor(ev) {
         <input type="number" id="tlEdCavroVel" value="${ev.velocity||''}" step="0.01"
                placeholder="auto" style="width:60px" oninput="tlEditorChanged()">
         <select id="tlEdCavroVelUnit" onchange="tlEditorChanged()" style="min-width:60px;font-size:10px">
-          <option value="mls" ${(ev.velUnit||'mls')==='mls'?'selected':''}>mL/s</option>
-          <option value="ulmin" ${ev.velUnit==='ulmin'?'selected':''}>µL/min</option>
+          <option value="ulmin" ${(ev.velUnit||'ulmin')==='ulmin'?'selected':''}>µL/min</option>
+          <option value="mls" ${ev.velUnit==='mls'?'selected':''}>mL/s</option>
         </select>
       </div>
       <div style="font-size:10px;color:var(--text3);margin-top:2px" id="tlEdCavroEst"></div>` : ''}
@@ -2489,8 +2554,8 @@ function tlOpenEditor(ev) {
         <input type="number" id="tlEdCavroVel" value="${ev.velocity||''}" step="0.01"
                placeholder="auto" style="width:60px" oninput="tlEditorChanged()">
         <select id="tlEdCavroVelUnit" onchange="tlEditorChanged()" style="min-width:60px;font-size:10px">
-          <option value="mls" ${(ev.velUnit||'mls')==='mls'?'selected':''}>mL/s</option>
-          <option value="ulmin" ${ev.velUnit==='ulmin'?'selected':''}>µL/min</option>
+          <option value="ulmin" ${(ev.velUnit||'ulmin')==='ulmin'?'selected':''}>µL/min</option>
+          <option value="mls" ${ev.velUnit==='mls'?'selected':''}>mL/s</option>
         </select>
       </div>
       <div style="font-size:10px;color:var(--text3);margin-top:2px" id="tlEdCavroEst"></div>` : ''}
@@ -2630,7 +2695,7 @@ function tlEditorChanged() {
   if(!ev) return;
   ev.name = document.getElementById("tlEdName").value || ev.type;
 
-  const wantStart = parseFloat(document.getElementById("tlEdStart").value) || 0;
+  const wantStart = _mmssToSec(document.getElementById("tlEdStart").value);
   const edDurRaw = parseFloat(document.getElementById("tlEdDur").value) || 1;
   const durUnit = document.getElementById("tlEdDurUnit").value;
   const edDur = durUnit === 'min' ? edDurRaw * 60 : edDurRaw;
@@ -2656,7 +2721,7 @@ function tlEditorChanged() {
     ev.duration = wantDur;
     ev.laneId = newLaneId;
   } else {
-    document.getElementById("tlEdStart").value = ev.start;
+    document.getElementById("tlEdStart").value = _secToMMSS(ev.start);
     document.getElementById("tlEdDur").value = ev.duration;
   }
 
@@ -2847,14 +2912,15 @@ async function tlApplyPresets(ev) {
 
 function tlSleep(ms) {
   return new Promise(resolve => {
-    const id = setTimeout(resolve, ms);
-    const check = setInterval(()=>{
-      if(tlAbort){ clearTimeout(id); clearInterval(check); resolve(); }
+    let done = false;
+    const id = setTimeout(() => { done = true; clearInterval(check); resolve(); }, ms);
+    const check = setInterval(() => {
+      if(tlAbort && !done){ done = true; clearTimeout(id); clearInterval(check); resolve(); }
     }, 100);
   });
 }
 
-async function tlRunCycle(sorted, progress, running) {
+async function tlRunCycle(sorted, progress) {
   const cycleDur = tlCycleSec();
   const pps = tlPxPerSec();
   const ph = document.getElementById("tlPlayhead");
@@ -2862,165 +2928,132 @@ async function tlRunCycle(sorted, progress, running) {
 
   const playheadLoop = () => {
     if(!tlRunning) return;
-    const elapsed = (performance.now() - cycleT0) / 1000;
-    const pos = (elapsed % cycleDur) * pps;
-    ph.style.left = (56 + pos) + 'px';
-    if(elapsed < cycleDur && !tlAbort) requestAnimationFrame(playheadLoop);
+    const elSec = (performance.now() - cycleT0) / 1000;
+    ph.style.left = (56 + Math.min(elSec, cycleDur) * pps) + 'px';
+    if(elSec < cycleDur && !tlAbort) requestAnimationFrame(playheadLoop);
   };
   requestAnimationFrame(playheadLoop);
 
-  let _captureQueue = [];
-  function waitForCapture() {
-    return new Promise(resolve => { _captureQueue.push(resolve); });
-  }
-  const origCapHandler = _eventHandlers["onCamCaptureComplete"];
-  _eventHandlers["onCamCaptureComplete"] = function(filename) {
-    if(_captureQueue.length) _captureQueue.shift()(filename);
-    if(origCapHandler) origCapHandler(filename);
-  };
+  const deadline = cycleT0 + cycleDur * 1000;
+  function timeLeft() { return Math.max(0, deadline - performance.now()); }
 
-  const runEvent = async (ev) => {
-    running.add(ev.id);
-    const el = document.querySelector(`.tl-event[data-id="${ev.id}"]`);
-    if(el) el.classList.add("running");
-    logMsg(`Timeline: starting ${ev.type} "${ev.name}"`, "exp");
-
-    /* -- pump execution (commented out) --
-    if(ev.type === 'pump') {
-      const pi = ev.pumpIdx || 0;
-      if(ev.action === 'stop') {
-        await api('pump_stop', pi);
-      } else {
-        await api('pump_set_rate', pi, ev.rate||100, ev.rateUnit||'UL/HR');
-        await api('pump_set_direction', pi, ev.direction||'INF');
-        await api('pump_run', pi);
-        await tlSleep(ev.duration * 1000);
-        if(!tlAbort) await api('pump_stop', pi);
-      }
-    } else -- end pump execution */
-    if(ev.type === 'cavro') {
-      const ci = parseInt(ev.cavroIdx) || 0;
-      const act = ev.cavroAction || 'valve';
-      console.log('Cavro event:', {act, ci, velocity: ev.velocity, velUnit: ev.velUnit, duration: ev.duration});
-      let vel = null;
-      if(ev.velocity !== '' && ev.velocity != null) {
-        vel = parseFloat(ev.velocity);
-        console.log('Cavro vel raw:', vel, 'unit:', ev.velUnit);
-        if(ev.velUnit === 'ulmin') vel = vel / 60000;
-        console.log('Cavro vel mL/s:', vel);
-      }
-      if(act === 'valve') {
-        await api('cavro_switch_valve', ci, ev.fromPort||1);
-        await api('cavro_switch_valve', ci, ev.toPort||2);
-      } else if(act === 'dispense') {
-        await api('cavro_dispense', ci, ev.volume||0.5, ev.fromPort||1, ev.toPort||2, vel);
-      } else if(act === 'continuous') {
-        const pumpTime = Math.max(0, (ev.duration - 4) * 1000);
-        await api('cavro_continuous_start', ci, ev.fromPort||1, ev.toPort||2, vel, 0);
-        await tlSleep(pumpTime);
-        await api('cavro_continuous_stop', ci);
-      } else if(act === 'coordinated') {
-        const pi = parseInt(ev.partnerIdx) || 1;
-        const f1 = parseInt(ev.fromPort) || 1;
-        const t1 = parseInt(ev.toPort) || 2;
-        const f2 = parseInt(ev.outFromPort) || 1;
-        const t2 = parseInt(ev.outToPort) || 3;
-        const pumpTime = Math.max(0, (ev.duration - 4) * 1000);
-        await api('cavro_coordinated_start', ci, pi, f1, t1, f2, t2, vel);
-        await tlSleep(pumpTime);
-        await api('cavro_coordinated_stop');
-      }
-    } else {
-      await tlApplyPresets(ev);
-      await tlSleep(500);
-
-      try {
-        if(ev.type === 'video') {
-          await api('cam_experiment_set_subdir', 'video');
-          const fps = ev.fps || 30;
-          const recDur = ev._recordDur || ev.duration;
-          progress.textContent = `${ev.name}: recording ${recDur}s @ ${fps}fps...`;
-          const done = waitForCapture();
-          const r = await api('cam_record_video', null, recDur, fps);
-          if(r.error) logMsg(`Video error: ${r.error}`, "error");
-          else await done;
-        } else if(ev.type === 'stack') {
-          await api('cam_experiment_set_subdir', 'stack');
-          const presetNames = ev.stackPresets && ev.stackPresets.length ? ev.stackPresets : [];
-          if(!presetNames.length) {
-            progress.textContent = `${ev.name}: no presets selected`;
-          } else {
-            progress.textContent = `${ev.name}: capturing ${presetNames.length} channels...`;
-            const acqStore = _loadStore("mos11_acq_presets");
-            const msStore  = _loadStore("mos11_ms_presets");
-            const channels = [];
-            for(const pn of presetNames) {
-              const a = acqStore[pn]; if(!a) continue;
-              const m = msStore[a.microscopePreset] || {};
-              channels.push({
-                objective: m.objective ?? null,
-                filter: m.filter ?? null,
-                lamp_intensity: m.lampIntensity ?? null,
-                lamp_on: m.lampOn != null ? !!m.lampOn : null,
-                shutter_open: m.shutterOpen != null ? !!m.shutterOpen : null,
-                il_shutter_open: m.ilShutterOpen != null ? !!m.ilShutterOpen : null,
-                il_nd: m.ilNd ?? null,
-                exposure_ms: a.exposure_ms ?? null,
-                binning: a.binning ?? 1,
-                color: a.color || 'auto'
-              });
-            }
-            const done = waitForCapture();
-            const r = await api('cam_stack_capture', channels, !!ev.keepShutterOpen);
-            if(r.error) logMsg(`Stack error: ${r.error}`, "error");
-            else await done;
-          }
-        } else if(ev.type === 'timelapse') {
-          await api('cam_experiment_set_subdir', 'timelapse');
-          const frames = ev.frames || 10;
-          const intervalMs = ev.interval || 1000;
-          const intervalSec = intervalMs / 1000;
-          progress.textContent = `${ev.name}: timelapse ${frames} frames, ${intervalMs}ms interval`;
-          const done = waitForCapture();
-          const r = await api('cam_record_timelapse', frames, intervalSec);
-          if(r.error) logMsg(`Timelapse error: ${r.error}`, "error");
-          else await done;
-        }
-      } finally {
-        const off = [];
-        if(scopeTiConnected) { off.push(api('ti_shutter_close')); off.push(api('ti_dia_lamp_off')); }
-        if(_ilConnected) off.push(api('il_shutter_close'));
-        if(off.length) await Promise.all(off);
-      }
-    }
-
-    running.delete(ev.id);
-    if(el) el.classList.remove("running");
-  };
-
-  const imgLane = tlLanes.find(l => l.type === 'imaging');
-  const imgLaneId = imgLane ? imgLane.id : null;
-  let imgChain = Promise.resolve();
-
+  // Launch events at their scheduled times
   for(const ev of sorted) {
-    if(tlAbort) break;
+    if(tlAbort || timeLeft() <= 0) break;
     const elapsed = (performance.now() - cycleT0) / 1000;
     const wait = ev.start - elapsed;
-    if(wait > 0.05) await tlSleep(wait * 1000);
-    if(tlAbort) break;
-
-    if(ev.type !== 'pump' && ev.type !== 'cavro' && ev.laneId === imgLaneId) {
-      imgChain = imgChain.then(() => runEvent(ev));
-    } else {
-      runEvent(ev);
+    if(wait > 0.05) {
+      await tlSleep(Math.min(wait * 1000, timeLeft()));
+      if(tlAbort || timeLeft() <= 0) break;
     }
+    launchEvent(ev, timeLeft(), progress);
   }
 
-  const remaining = cycleDur - (performance.now() - cycleT0) / 1000;
-  if(remaining > 0.1 && !tlAbort) await tlSleep(remaining * 1000);
+  // Wait for remaining cycle time
+  if(timeLeft() > 100 && !tlAbort) await tlSleep(timeLeft());
 
-  while(running.size > 0 && !tlAbort) await tlSleep(200);
-  _eventHandlers["onCamCaptureComplete"] = origCapHandler;
+  // Hard stop: kill all running hardware, don't wait for graceful finish
+  await tlStopAllHardware(sorted);
+
+  function launchEvent(ev, maxMs, progress) {
+    const run = async () => {
+      try {
+        if(ev.type === 'cavro') {
+          const ci = parseInt(ev.cavroIdx) || 0;
+          const act = ev.cavroAction || 'valve';
+          let vel = null;
+          if(ev.velocity !== '' && ev.velocity != null) {
+            vel = parseFloat(ev.velocity);
+            if(ev.velUnit === 'ulmin') vel = vel / 60000;
+          }
+          if(act === 'valve') {
+            await api('cavro_switch_valve', ci, ev.fromPort||1);
+            await api('cavro_switch_valve', ci, ev.toPort||2);
+          } else if(act === 'dispense') {
+            await api('cavro_dispense', ci, ev.volume||0.5, ev.fromPort||1, ev.toPort||2, vel);
+          } else if(act === 'continuous') {
+            await api('cavro_continuous_start', ci, ev.fromPort||1, ev.toPort||2, vel, 0);
+          } else if(act === 'coordinated') {
+            const pi = parseInt(ev.partnerIdx) || 1;
+            await api('cavro_coordinated_start', ci, pi,
+              parseInt(ev.fromPort)||1, parseInt(ev.toPort)||2,
+              parseInt(ev.outFromPort)||1, parseInt(ev.outToPort)||3, vel);
+          }
+        } else {
+          await tlApplyPresets(ev);
+          await tlSleep(500);
+          if(ev.type === 'video') {
+            await api('cam_experiment_set_subdir', 'video');
+            const fps = ev.fps || 30;
+            const recDur = ev._recordDur || ev.duration;
+            progress.textContent = `${ev.name}: recording ${recDur}s @ ${fps}fps...`;
+            await api('cam_record_video', null, recDur, fps);
+          } else if(ev.type === 'stack') {
+            await api('cam_experiment_set_subdir', 'stack');
+            const presetNames = ev.stackPresets && ev.stackPresets.length ? ev.stackPresets : [];
+            if(presetNames.length) {
+              progress.textContent = `${ev.name}: capturing ${presetNames.length} channels...`;
+              const acqStore = _loadStore("mos11_acq_presets");
+              const msStore  = _loadStore("mos11_ms_presets");
+              const channels = presetNames.map(pn => {
+                const a = acqStore[pn]; if(!a) return null;
+                const m = msStore[a.microscopePreset] || {};
+                return {
+                  objective: m.objective ?? null, filter: m.filter ?? null,
+                  lamp_intensity: m.lampIntensity ?? null,
+                  lamp_on: m.lampOn != null ? !!m.lampOn : null,
+                  shutter_open: m.shutterOpen != null ? !!m.shutterOpen : null,
+                  il_shutter_open: m.ilShutterOpen != null ? !!m.ilShutterOpen : null,
+                  il_nd: m.ilNd ?? null,
+                  exposure_ms: a.exposure_ms ?? null, binning: a.binning ?? 1,
+                  color: a.color || 'auto'
+                };
+              }).filter(Boolean);
+              await api('cam_stack_capture', channels, !!ev.keepShutterOpen);
+            }
+          } else if(ev.type === 'timelapse') {
+            await api('cam_experiment_set_subdir', 'timelapse');
+            const frames = ev.frames || 10;
+            const intervalSec = (ev.interval || 1000) / 1000;
+            progress.textContent = `${ev.name}: timelapse ${frames} frames`;
+            await api('cam_record_timelapse', frames, intervalSec);
+          }
+        }
+      } catch(err) {
+        logMsg(`Event "${ev.name}" error: ${err}`, "error");
+      }
+    };
+    run();
+  }
+}
+
+async function tlStopAllHardware(sorted) {
+  const stops = [];
+  const seenCavro = new Set();
+  for(const ev of sorted) {
+    if(ev.type === 'cavro') {
+      const ci = parseInt(ev.cavroIdx) || 0;
+      if(ev.cavroAction === 'continuous' && !seenCavro.has('cont_'+ci)) {
+        seenCavro.add('cont_'+ci);
+        stops.push(api('cavro_continuous_stop', ci).catch(()=>{}));
+      }
+      if(ev.cavroAction === 'coordinated' && !seenCavro.has('coord')) {
+        seenCavro.add('coord');
+        stops.push(api('cavro_coordinated_stop').catch(()=>{}));
+      }
+    }
+    if(ev.type === 'video' || ev.type === 'timelapse') {
+      if(!seenCavro.has('cam')) {
+        seenCavro.add('cam');
+        stops.push(api('cam_capture_stop').catch(()=>{}));
+      }
+    }
+  }
+  const off = [];
+  if(scopeTiConnected) { off.push(api('ti_shutter_close').catch(()=>{})); off.push(api('ti_dia_lamp_off').catch(()=>{})); }
+  if(_ilConnected) off.push(api('il_shutter_close').catch(()=>{}));
+  stops.push(...off);
+  if(stops.length) await Promise.all(stops);
 }
 
 async function tlPlay() {
@@ -3050,7 +3083,6 @@ async function tlPlay() {
   const sorted = [...tlEvents].sort((a,b) => a.start - b.start);
   const reps = tlRepeatCount();
   const cycleDur = tlCycleSec();
-  const running = new Set();
   const globalT0 = performance.now();
 
   let cycle = 0;
@@ -3063,7 +3095,7 @@ async function tlPlay() {
     progress.textContent = `${cycleLabel} | Elapsed: ${tlFormatDuration(Math.round(elapsed))}`;
     logMsg(`Timeline: ${cycleLabel} starting`, "exp");
 
-    await tlRunCycle(sorted, progress, running);
+    await tlRunCycle(sorted, progress);
   }
 
   tlRunning = false;

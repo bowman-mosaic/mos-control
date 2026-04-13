@@ -128,14 +128,21 @@ def cavro_disconnect_bus():
     for i in range(NUM_CAVRO):
         _cont_stops[i].set()
         _proto_stops[i].set()
-    # Wait briefly for threads to notice the stop flag
+    # Halt all pumps immediately so they stop moving
+    for i in range(NUM_CAVRO):
+        if _pumps[i] is not None:
+            try:
+                _pumps[i].halt()
+            except Exception:
+                pass
+    # Wait for background threads to finish
     if _coord_thread and _coord_thread.is_alive():
-        _coord_thread.join(timeout=2)
+        _coord_thread.join(timeout=10)
     for i in range(NUM_CAVRO):
         if _cont_threads[i] and _cont_threads[i].is_alive():
-            _cont_threads[i].join(timeout=2)
+            _cont_threads[i].join(timeout=10)
         if _proto_threads[i] and _proto_threads[i].is_alive():
-            _proto_threads[i].join(timeout=2)
+            _proto_threads[i].join(timeout=10)
     with _serial_lock:
         for i in range(NUM_CAVRO):
             _pumps[i] = None
@@ -258,6 +265,22 @@ def cavro_halt(idx):
 
 
 @expose
+def cavro_stop_all():
+    """Emergency stop: halt all pumps and kill all background threads."""
+    _coord_stop.set()
+    for i in range(NUM_CAVRO):
+        _cont_stops[i].set()
+        _proto_stops[i].set()
+    for i in range(NUM_CAVRO):
+        if _pumps[i] is not None:
+            try:
+                _pumps[i].halt()
+            except Exception:
+                pass
+    return {"ok": True}
+
+
+@expose
 def cavro_get_status(idx):
     if not _check(idx):
         return {"error": "Not connected"}
@@ -293,7 +316,7 @@ def cavro_continuous_start(idx, from_port, to_port, velocity_ml=None,
             _pumps[idx].halt()
         except Exception:
             pass
-        _cont_threads[idx].join(timeout=3)
+        _cont_threads[idx].join(timeout=60)
     if _proto_threads[idx] and _proto_threads[idx].is_alive():
         return {"error": "Protocol already running on this pump"}
     _cont_stops[idx].clear()
@@ -313,13 +336,15 @@ def cavro_continuous_start(idx, from_port, to_port, velocity_ml=None,
 
 @expose
 def cavro_continuous_stop(idx):
-    """Interrupt the current move; flush happens in background."""
+    """Stop continuous pumping and wait for flush to complete."""
     _cont_stops[idx].set()
     if _check(idx):
         try:
             _pumps[idx].halt()
         except Exception:
             pass
+    if _cont_threads[idx] and _cont_threads[idx].is_alive():
+        _cont_threads[idx].join(timeout=60)
     return {"ok": True}
 
 
@@ -452,7 +477,7 @@ def cavro_coordinated_start(idx1, idx2, from1, to1, from2, to2,
                     _pumps[ci].halt()
                 except Exception:
                     pass
-        _coord_thread.join(timeout=3)
+        _coord_thread.join(timeout=60)
     _coord_stop.clear()
     i1, i2 = int(idx1), int(idx2)
     f1, t1_ = max(1, min(6, int(from1))), max(1, min(6, int(to1)))
@@ -474,7 +499,7 @@ def cavro_coordinated_start(idx1, idx2, from1, to1, from2, to2,
 
 @expose
 def cavro_coordinated_stop():
-    """Interrupt the current moves; flush happens in background."""
+    """Stop coordinated pumping and wait for flush to complete."""
     global _coord_thread
     _coord_stop.set()
     for ci in _coord_pump_idxs:
@@ -483,6 +508,8 @@ def cavro_coordinated_stop():
                 _pumps[ci].halt()
             except Exception:
                 pass
+    if _coord_thread and _coord_thread.is_alive():
+        _coord_thread.join(timeout=60)
     return {"ok": True}
 
 
@@ -569,7 +596,7 @@ def _coordinated_thread(idx1, idx2, from1, to1, from2, to2, velocity_ml, ready=N
             push_event("onCavroCoordinatedUpdate", "running",
                        f"Cycle {n} — {total:.2f} mL total")
 
-        # Final flush: push everything back to source ports at max speed
+        # Final flush: inlet pump back to source, outlet pump out to destination
         flush1 = pump1.volume_ml > 0.001
         flush2 = pump2.volume_ml > 0.001
         if flush1:
