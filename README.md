@@ -77,4 +77,4 @@ mos-control/
 
 ## License
 
-Internal use — Bowman Lab.
+Internal use
