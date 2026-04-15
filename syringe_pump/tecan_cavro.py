@@ -310,8 +310,6 @@ class TecanCavro:
             if retries <= 0:
                 raise err
 
-            # if log:
-            #     self.logger.warning(f'Retrying message, {retries} remaining')
             return self.command_request_raw(command, parameters, retry=True, execute=execute, retries=retries - 1)
 
     def command_request(self, command: str, parameters: List[int]=[], retry: bool=False, batch: bool=False,
@@ -703,18 +701,6 @@ class TecanCavro:
             self.execute(wait=wait, execute=execute)
 
         self.batch_mode = batch_mode
-
-    #custom "dispense 0.5" method
-    def dispense_05(self, from_port:int, to_port:int, wait:bool=True, execute: bool=True):
-        self.dispense_ml(volume_ml=0.5, from_port=from_port, to_port=to_port, wait=wait, execute=execute, velocity_ml=0.01, dispense_velocity_ml=0.01)
-        """
-        Pumps 0.5mL from "from_port" to "to_port" at 0.01mL/s using the dispense_ml() method
-
-        :param from_port: The port to dispense from
-        :param to_port: The port to dispense to
-        :param wait: [Optional] Wait for dispense to complete if True, defaults to True
-        :param execute: [Optional] Execute this command immediately if True, defaults to True
-        """
 
     def pump_ml(self, volume_ml: float, port: int, velocity_ml: Optional[float]=None, velocity_counts: Optional[int]=None, wait: bool=True):
         """

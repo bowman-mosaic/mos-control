@@ -456,7 +456,6 @@ class Serial:
 
             first = False
 
-        #time.sleep(0.5)
         self.init_device()
         self.connected = True
 

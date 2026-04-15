@@ -1,6 +1,6 @@
 """
 Pump control module — exposes Harvard Apparatus syringe pump operations via
-Flask API.  Wraps Syringe_pump/syringe_pump_control.py without modifying it.
+Flask API.  Wraps syringe_pump/syringe_pump_control.py without modifying it.
 """
 
 from modules._api import expose, push_event
@@ -9,7 +9,7 @@ import time
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "Syringe_pump"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "syringe_pump"))
 from syringe_pump_control import HarvardPump, list_serial_ports  # noqa: E402
 
 NUM_PUMPS = 4

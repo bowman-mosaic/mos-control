@@ -1,6 +1,6 @@
 """
 Tecan Cavro XCalibur syringe-pump control module — exposes operations via
-Flask API.  Wraps Syringe_pump/tecan_cavro.py (+ ftdi_serial.py, motion.py).
+Flask API.  Wraps syringe_pump/tecan_cavro.py (+ ftdi_serial.py, motion.py).
 
 All 4 pumps share one RS-485 serial connection (single COM port).
 A bus-level lock (_bus_lock) serializes every serial transaction so
@@ -13,7 +13,7 @@ import time
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "Syringe_pump"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "syringe_pump"))
 from ftdi_serial import Serial as FtdiSerial              # noqa: E402
 from tecan_cavro import TecanCavro                         # noqa: E402
 from syringe_pump_control import list_serial_ports         # noqa: E402
