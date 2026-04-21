@@ -9,6 +9,8 @@ experiments/
 exports/
 *.npy
 
+Obs_bot/
+
 .env
 .vscode/
 .idea/

@@ -26,21 +26,21 @@ import modules.experiment              # noqa: F401
 import modules.nikon_ti                # noqa: F401
 import modules.coolsnap                # noqa: F401
 import modules.intensilight            # noqa: F401
+import modules.obsbot                  # noqa: F401
 
 from flask import Response, jsonify
 from flask_sock import Sock
 import modules.coolsnap as _cs
+import modules.obsbot as _ob
 
 sock = Sock(app)
 
 
-# ── WebSocket live stream ───────────────────────────────────────────────────
-# Single persistent connection, binary JPEG frames pushed as fast as the
-# camera produces them.  No HTTP overhead per frame, no base64.
+# ── WebSocket live streams ───────────────────────────────────────────────────
 
 @sock.route("/cam/live")
 def cam_live_ws(ws):
-    """Stream binary JPEG frames over WebSocket."""
+    """Stream binary JPEG frames from CoolSNAP over WebSocket."""
     prev_id = None
     while True:
         if not _cs.live_is_active():
@@ -59,6 +59,40 @@ def cam_live_ws(ws):
             ws.send(jpeg)
         except Exception:
             break
+
+
+@sock.route("/obsbot/live")
+def obsbot_live_ws(ws):
+    """Stream JPEG frames from FFmpeg-decoded OBSBOT RTSP over WebSocket."""
+    prev = None
+    while True:
+        if not _ob.live_is_active():
+            _ob._frame_event.wait(timeout=1.0)
+            if not _ob.live_is_active():
+                break
+
+        _ob._frame_event.wait(timeout=0.5)
+        _ob._frame_event.clear()
+
+        jpeg = _ob.get_live_jpeg()
+        if jpeg is None or jpeg is prev:
+            continue
+        prev = jpeg
+        try:
+            ws.send(jpeg)
+        except Exception:
+            break
+
+
+@app.route("/obsbot/snap")
+def obsbot_snap():
+    """Grab one clean RTSP frame and return raw JPEG."""
+    try:
+        jpeg = _ob.snap_jpeg()
+        return Response(jpeg, mimetype="image/jpeg",
+                        headers={"Cache-Control": "no-store"})
+    except Exception as e:
+        return Response(str(e), status=500)
 
 
 # ── HTTP fallback endpoints (snap preview, FPS readout) ─────────────────────
@@ -87,6 +121,7 @@ import modules.coolsnap as _cs_mod
 import modules.intensilight as _il
 import modules.pumps as _pumps_mod
 import modules.cavro as _cavro_mod
+import modules.obsbot as _obsbot_mod
 
 _shutdown_done = False
 
@@ -101,6 +136,7 @@ def _shutdown():
         ("CoolSNAP",     _cs_mod.disconnect),
         ("Nikon Ti",     _ti.disconnect),
         ("IntensiLight", _il.disconnect),
+        ("OBSBOT",       _obsbot_mod.disconnect),
     ]:
         try:
             fn()

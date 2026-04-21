@@ -222,7 +222,7 @@ option { background:#fff; }
                  border:1px solid var(--border);
                  background:var(--surface); overflow:hidden; }
 .tl-ruler-scroll { flex:1; overflow-x:auto; overflow-y:auto; position:relative; }
-.tl-ruler { position:relative; min-height:100%; }
+.tl-ruler { position:relative; min-height:100%; overflow:hidden; }
 .tl-ruler-axis { position:sticky; top:0; z-index:5; height:28px;
                  background:var(--card); border-bottom:1px solid var(--border); }
 .tl-ruler-axis canvas { display:block; }
@@ -345,6 +345,7 @@ option { background:#fff; }
         <span class="indicator" id="indScope"><span class="dot"></span>SCOPE</span>
         <span class="indicator" id="indIL"><span class="dot"></span>IL</span>
         <span class="indicator" id="indCam"><span class="dot"></span>CAM</span>
+        <span class="indicator" id="indObsbot"><span class="dot"></span>OBS</span>
       </div>
       <button class="btn btn-sm accent" onclick="refreshPorts()">Refresh Ports</button>
     </div>
@@ -360,6 +361,7 @@ option { background:#fff; }
       <a class="nav-item" data-panel="live" onclick="switchPanel('live')">Live</a>
       <a class="nav-item" data-panel="timeline" onclick="switchPanel('timeline')">Timeline</a>
       <a class="nav-item" data-panel="viewer" onclick="switchPanel('viewer')">Viewer</a>
+      <a class="nav-item" data-panel="obsbot" onclick="switchPanel('obsbot')">OBSBOT</a>
       <a class="nav-item" data-panel="log" onclick="switchPanel('log')">Log</a>
     </nav>
 
@@ -723,6 +725,9 @@ option { background:#fff; }
             <div class="sep"></div>
             <button class="btn green btn-sm" id="tlPlayBtn" onclick="tlPlay()">&#9654; Play</button>
             <button class="btn red btn-sm" id="tlStopBtn" onclick="tlStop()" disabled>&#9632; Stop</button>
+            <label style="font-size:11px;display:flex;align-items:center;gap:3px;cursor:pointer;color:#e55039;font-weight:600">
+              <input type="checkbox" id="tlRecordIncubator"> Record Temp/CO2
+            </label>
             <div class="sep"></div>
             <label style="font-size:11px;font-weight:600;color:var(--text2)">Zoom</label>
             <input type="range" id="tlZoom" min="0" max="100" value="30"
@@ -892,6 +897,140 @@ option { background:#fff; }
               <span id="npyExportStatus" style="font-size:11px;color:var(--text3)"></span>
             </div>
           </div>
+        </div>
+      </section>
+
+      <!-- ════════ OBSBOT ════════ -->
+      <section id="panel-obsbot" class="panel">
+        <div class="panel-title">OBSBOT Camera</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start">
+
+          <!-- Left column: connection + waypoints -->
+          <div style="display:flex;flex-direction:column;gap:12px">
+
+            <!-- Connection -->
+            <div class="card" id="obsbotConnCard">
+              <div class="card-head"><span class="title">Connection</span>
+                <span class="badge" id="obsbotBadge">Offline</span></div>
+              <div class="section">
+                <div class="field"><label>IP</label>
+                  <input type="text" id="obsbotIp" value="192.168.1.31" style="flex:1"></div>
+                <div class="field"><label>RTSP URL</label>
+                  <input type="text" id="obsbotRtsp" value="rtsp://192.168.1.31/stream2" style="flex:1"></div>
+                <div class="btn-row">
+                  <button class="btn green btn-sm" id="obsbotConnBtn" onclick="obsbotConnect()">Connect</button>
+                  <button class="btn red btn-sm" id="obsbotDiscBtn" onclick="obsbotDisconnect()" disabled>Disconnect</button>
+                  <button class="btn btn-sm" onclick="obsbotPower(true)" title="Power On">Power On</button>
+                  <button class="btn btn-sm" onclick="obsbotPower(false)" title="Power Off" style="border-color:var(--red)">Power Off</button>
+                </div>
+                <div style="margin-top:6px;font-size:11px;color:var(--text3)" id="obsbotInfo"></div>
+              </div>
+            </div>
+
+            <!-- Waypoints -->
+            <div class="card">
+              <div class="card-head"><span class="title">Waypoints</span>
+                <span style="font-size:11px;color:var(--text3)" id="obsbotWpCount">0</span></div>
+              <div class="section">
+                <div class="field">
+                  <input type="text" id="obsbotWpName" placeholder="Waypoint name" style="flex:1">
+                  <button class="btn btn-sm accent" onclick="obsbotMark()">Mark</button>
+                </div>
+                <div id="obsbotWpList" style="margin-top:8px;font-size:11px;max-height:240px;overflow-y:auto"></div>
+              </div>
+            </div>
+
+            <!-- Sequence -->
+            <div class="card">
+              <div class="card-head"><span class="title">Sequence</span>
+                <span class="badge" id="obsbotSeqBadge">Idle</span></div>
+              <div class="section">
+                <div class="field">
+                  <label>Dwell</label>
+                  <input type="number" id="obsbotDwell" value="3" min="1" step="0.5" style="width:60px">
+                  <span style="font-size:11px;color:var(--text3)">sec</span>
+                </div>
+                <div class="btn-row">
+                  <button class="btn green btn-sm" onclick="obsbotRunSequence()">Run Sequence</button>
+                  <button class="btn red btn-sm" onclick="obsbotStopSequence()">Stop</button>
+                  <button class="btn btn-sm" onclick="obsbotCapture()">Snap</button>
+                </div>
+                <div id="obsbotSeqProgress" style="margin-top:6px;font-size:11px;color:var(--text3)"></div>
+              </div>
+            </div>
+
+            <!-- Incubator Monitor -->
+            <div class="card">
+              <div class="card-head"><span class="title">Incubator Monitor</span>
+                <span class="badge" id="obsbotMonBadge">Off</span></div>
+              <div class="section">
+                <div class="field">
+                  <label>Every</label>
+                  <input type="number" id="obsbotMonInterval" value="60" min="1" step="1" style="width:60px">
+                  <span style="font-size:11px;color:var(--text3)">min</span>
+                </div>
+                <div class="field">
+                  <label>Waypoint</label>
+                  <select id="obsbotMonWaypoint" style="flex:1;font-size:11px">
+                    <option value="">(current position)</option>
+                  </select>
+                </div>
+
+                <div style="font-size:11px;margin-top:4px;font-weight:600">Crop Regions
+                  <span style="font-weight:400;color:var(--text3)">(click & drag on preview image to set)</span>
+                </div>
+                <div style="display:flex;gap:8px;font-size:11px;margin-top:2px">
+                  <button class="btn btn-sm" id="obsbotCropTempBtn" onclick="obsbotStartCrop('temp')" style="border-color:#f80">Set Temp Region</button>
+                  <span id="obsbotCropTempStatus" style="color:var(--text3);align-self:center">not set</span>
+                </div>
+                <div style="display:flex;gap:8px;font-size:11px;margin-top:2px">
+                  <button class="btn btn-sm" id="obsbotCropCo2Btn" onclick="obsbotStartCrop('co2')" style="border-color:#0af">Set CO2 Region</button>
+                  <span id="obsbotCropCo2Status" style="color:var(--text3);align-self:center">not set</span>
+                </div>
+
+                <div class="btn-row" style="margin-top:6px">
+                  <button class="btn green btn-sm" id="obsbotMonStartBtn" onclick="obsbotMonStart()">Start Monitor</button>
+                  <button class="btn red btn-sm" onclick="obsbotMonStop()">Stop</button>
+                  <button class="btn btn-sm" onclick="obsbotMonSnapNow()">Read Now</button>
+                </div>
+                <div id="obsbotMonValues" style="margin-top:8px;display:none;gap:16px;font-size:14px;font-weight:600">
+                  <span>Temp: <span id="obsbotMonTemp" style="color:#f80">--</span> °C</span>
+                  <span style="margin-left:16px">CO2: <span id="obsbotMonCo2" style="color:#0af">--</span> %</span>
+                </div>
+                <div id="obsbotMonReading" style="margin-top:4px;font-size:10px;color:var(--text3)"></div>
+                <div id="obsbotMonImageWrap" style="margin-top:6px;background:#000;min-height:120px;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;cursor:crosshair">
+                  <img id="obsbotMonImage" style="max-width:100%;max-height:300px;object-fit:contain;display:none">
+                  <div id="obsbotMonPlaceholder" style="color:#666;font-size:11px">No reading yet</div>
+                  <div id="obsbotCropOverlay" style="position:absolute;border:2px dashed #f80;display:none;pointer-events:none"></div>
+                  <div id="obsbotCropTempBox" style="position:absolute;border:2px solid #f80;display:none;pointer-events:none">
+                    <span style="position:absolute;top:-14px;left:0;font-size:9px;color:#f80;font-weight:700">TEMP</span>
+                  </div>
+                  <div id="obsbotCropCo2Box" style="position:absolute;border:2px solid #0af;display:none;pointer-events:none">
+                    <span style="position:absolute;top:-14px;left:0;font-size:9px;color:#0af;font-weight:700">CO2</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Right column: live preview -->
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="background:#000;position:relative;min-height:360px;display:flex;align-items:center;justify-content:center;overflow:hidden">
+              <img id="obsbotPreview" alt="OBSBOT preview" style="max-width:100%;max-height:100%;object-fit:contain;display:none">
+              <div id="obsbotPlaceholder" style="color:#666;font-size:13px;text-align:center;padding:24px">
+                Connect OBSBOT and click <strong>Live</strong> to stream
+              </div>
+              <div id="obsbotFps" style="position:absolute;top:8px;right:8px;font-size:11px;font-weight:600;color:#0f0;background:rgba(0,0,0,.5);padding:2px 6px;display:none"></div>
+            </div>
+            <div style="display:flex;gap:6px;align-items:center">
+              <button class="btn btn-sm" id="obsbotLiveBtn" onclick="obsbotToggleLive()">Live</button>
+              <button class="btn btn-sm" onclick="obsbotHome()">Home</button>
+              <div style="flex:1"></div>
+              <div id="obsbotPtzInfo" style="font-size:10px;color:var(--text3)"></div>
+            </div>
+          </div>
+
         </div>
       </section>
 
@@ -2220,7 +2359,7 @@ function tlDrawAxis() {
   const canvas = document.getElementById("tlAxisCanvas");
   const pps = tlPxPerSec();
   const total = tlCycleSec();
-  const w = Math.max(total * pps, 800);
+  const w = 56 + Math.ceil(total * pps);
   canvas.width = w; canvas.height = 28;
   canvas.style.width = w + 'px';
   const ctx = canvas.getContext("2d");
@@ -2236,7 +2375,7 @@ function tlDrawAxis() {
   const minorStep = majorStep / minorDiv;
 
   for(let t = 0; t <= total + minorStep * 0.5; t += minorStep) {
-    const x = Math.round(t * pps) + 0.5;
+    const x = Math.round(t * pps + 56) + 0.5;
     if(x > w) break;
     const isMajor = Math.abs(t % majorStep) < 0.001 || Math.abs(t % majorStep - majorStep) < 0.001;
     ctx.beginPath();
@@ -2252,7 +2391,7 @@ function tlDrawAxis() {
 function tlRender() {
   const pps = tlPxPerSec();
   const total = tlTotalSec();
-  const rulerW = Math.max(total * pps, 800);
+  const rulerW = 56 + Math.ceil(total * pps);
   document.getElementById("tlRuler").style.width = rulerW + 'px';
 
   tlDrawAxis();
@@ -3234,6 +3373,20 @@ async function tlPlay() {
     logMsg(`Timeline: ${cycleLabel} starting`, "exp");
 
     await tlRunCycle(sorted, progress);
+
+    if(document.getElementById("tlRecordIncubator").checked && !tlAbort) {
+      progress.textContent = `${cycleLabel} | Reading incubator...`;
+      try {
+        const r = await api('obsbot_incubator_reading', expRes.path);
+        if(r.error) {
+          logMsg(`Incubator error: ${r.error}`, "error");
+        } else {
+          logMsg(`Incubator: temp=${r.temperature} co2=${r.co2}`, "exp");
+        }
+      } catch(e) {
+        logMsg(`Incubator error: ${e}`, "error");
+      }
+    }
   }
 
   tlRunning = false;
@@ -3484,7 +3637,7 @@ async function npyAutoAdjust() {
 }
 function npyReloadCurrent() {
   if(!_npyCurrentFile) return;
-  if(_npyShowingStack) { npyStackFrames(); return; }
+  if(_npyShowingStack) { _npyRenderStack(); return; }
   if(_npyShowingMerge) { _npyDoMerge(); return; }
   if(_npyFileTypeCache === 'stack') {
     const ch = parseInt(document.getElementById("npyChannelSelect").value) || 0;
@@ -3719,6 +3872,16 @@ function npyStackTlSetSpeed() {
 
 /* ── Timelapse: stack all frames ── */
 let _npyShowingStack = false;
+async function _npyRenderStack() {
+  const bcg = _npyBcgValues();
+  const r = await api('cam_npy_stack', _npyCurrentFile, 'max',
+                       bcg.brightness, bcg.contrast, bcg.gamma, _npySubdir);
+  if(r.error) { toast(r.error, "error"); return; }
+  const img = document.getElementById("npyImage");
+  img.src = "data:image/jpeg;base64," + r.image;
+  document.getElementById("npyFileInfo").textContent =
+    `${_npyCurrentFile} — Max projection of ${r.n_frames} frames, ${r.width}×${r.height} px`;
+}
 async function npyStackFrames() {
   if(!_npyCurrentFile) return;
   if(_npyShowingStack) {
@@ -3728,17 +3891,10 @@ async function npyStackFrames() {
     npyReloadCurrent();
     return;
   }
-  const bcg = _npyBcgValues();
-  const r = await api('cam_npy_stack', _npyCurrentFile, 'max',
-                       bcg.brightness, bcg.contrast, bcg.gamma, _npySubdir);
-  if(r.error) { toast(r.error, "error"); return; }
   _npyShowingStack = true;
   document.getElementById("npyStackBtn").textContent = "Single Frame";
   document.getElementById("npyStackBtn").style.background = "#059669";
-  const img = document.getElementById("npyImage");
-  img.src = "data:image/jpeg;base64," + r.image;
-  document.getElementById("npyFileInfo").textContent =
-    `${_npyCurrentFile} — Max projection of ${r.n_frames} frames, ${r.width}×${r.height} px`;
+  await _npyRenderStack();
 }
 
 /* ── Stack: merge all channels into multi-color composite ── */
@@ -3904,6 +4060,389 @@ onEvent("onCamCaptureComplete", function(filename) {
   if(document.querySelector('[data-panel="viewer"]').classList.contains("active")) {
     npyRefreshList(filename);
   }
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   OBSBOT
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+let obsbotConnected = false;
+let obsbotLiveActive = false;
+let _obsbotWs = null;
+let _obsbotFpsPoller = null;
+
+function _obsbotSetConnected(on) {
+  obsbotConnected = on;
+  const badge = document.getElementById("obsbotBadge");
+  const card = document.getElementById("obsbotConnCard");
+  const ind = document.getElementById("indObsbot");
+  badge.textContent = on ? "Online" : "Offline";
+  badge.classList.toggle("on", on);
+  card.classList.toggle("connected", on);
+  ind.classList.toggle("on", on);
+  document.getElementById("obsbotConnBtn").disabled = on;
+  document.getElementById("obsbotDiscBtn").disabled = !on;
+}
+
+async function obsbotConnect() {
+  const ip = document.getElementById("obsbotIp").value.trim();
+  const rtsp = document.getElementById("obsbotRtsp").value.trim();
+  if(!ip) { toast("Enter IP address","error"); return; }
+  const r = await api('obsbot_connect', ip, rtsp);
+  if(r.error) { toast("OBSBOT: "+r.error,"error"); return; }
+  _obsbotSetConnected(true);
+  const info = document.getElementById("obsbotInfo");
+  info.textContent = `Pan:${r.pan} Tilt:${r.tilt} Zoom:${r.zoom} Focus:${r.focus_mode}`;
+  toast("OBSBOT connected","success");
+  obsbotRefreshWaypoints();
+  _obsbotLoadCrops();
+}
+
+async function obsbotDisconnect() {
+  if(obsbotLiveActive) await obsbotToggleLive();
+  await api('obsbot_disconnect');
+  _obsbotSetConnected(false);
+  document.getElementById("obsbotInfo").textContent = "";
+  document.getElementById("obsbotPreview").style.display = "none";
+  document.getElementById("obsbotPlaceholder").style.display = "";
+  toast("OBSBOT disconnected","success");
+}
+
+async function obsbotPower(on) {
+  if(!obsbotConnected) { toast("Connect OBSBOT first","error"); return; }
+  const r = await api(on ? 'obsbot_power_on' : 'obsbot_power_off');
+  if(r.error) toast(r.error,"error");
+  else toast("OBSBOT power " + (on ? "on" : "off"), "success");
+}
+
+async function obsbotHome() {
+  if(!obsbotConnected) { toast("Connect OBSBOT first","error"); return; }
+  const r = await api('obsbot_home');
+  if(r.error) toast(r.error,"error");
+}
+
+async function obsbotToggleLive() {
+  if(obsbotLiveActive) {
+    obsbotLiveActive = false;
+    if(_obsbotWs) { _obsbotWs.close(); _obsbotWs = null; }
+    await api('obsbot_live_stop');
+    document.getElementById("obsbotLiveBtn").classList.remove("green");
+    document.getElementById("obsbotLiveBtn").textContent = "Live";
+    document.getElementById("obsbotFps").style.display = "none";
+    if(_obsbotFpsPoller) { clearInterval(_obsbotFpsPoller); _obsbotFpsPoller = null; }
+    return;
+  }
+  if(!obsbotConnected) { toast("Connect OBSBOT first","error"); return; }
+  const r = await api('obsbot_live_start');
+  if(r.error) { toast(r.error,"error"); return; }
+
+  obsbotLiveActive = true;
+  document.getElementById("obsbotLiveBtn").classList.add("green");
+  document.getElementById("obsbotLiveBtn").textContent = "Stop Live";
+
+  const proto = location.protocol==="https:"?"wss:":"ws:";
+  _obsbotWs = new WebSocket(proto+"//"+location.host+"/obsbot/live");
+  _obsbotWs.binaryType = "blob";
+
+  const img = document.getElementById("obsbotPreview");
+  let prevUrl = null, frameCount = 0, fpsT0 = performance.now();
+
+  _obsbotWs.onmessage = function(e) {
+    const url = URL.createObjectURL(e.data);
+    img.src = url; img.style.display = "block";
+    document.getElementById("obsbotPlaceholder").style.display = "none";
+    if(prevUrl) URL.revokeObjectURL(prevUrl);
+    prevUrl = url; frameCount++;
+  };
+  _obsbotWs.onclose = function() {
+    if(obsbotLiveActive) {
+      obsbotLiveActive = false;
+      document.getElementById("obsbotLiveBtn").classList.remove("green");
+      document.getElementById("obsbotLiveBtn").textContent = "Live";
+      document.getElementById("obsbotFps").style.display = "none";
+      if(_obsbotFpsPoller) { clearInterval(_obsbotFpsPoller); _obsbotFpsPoller = null; }
+    }
+  };
+  const fpsEl = document.getElementById("obsbotFps");
+  fpsEl.style.display = "block";
+  _obsbotFpsPoller = setInterval(() => {
+    const dt = (performance.now() - fpsT0) / 1000;
+    if(dt > 0) fpsEl.textContent = (frameCount / dt).toFixed(1) + " FPS";
+    frameCount = 0; fpsT0 = performance.now();
+  }, 1000);
+}
+
+async function obsbotMark() {
+  if(!obsbotConnected) { toast("Connect OBSBOT first","error"); return; }
+  const name = document.getElementById("obsbotWpName").value.trim();
+  const r = await api('obsbot_mark', name);
+  if(r.error) { toast(r.error,"error"); return; }
+  document.getElementById("obsbotWpName").value = "";
+  toast("Marked: " + r.waypoint.name, "success");
+  obsbotRefreshWaypoints();
+}
+
+async function obsbotRefreshWaypoints() {
+  const r = await api('obsbot_list_waypoints');
+  if(r.error) return;
+  const wps = r.waypoints || [];
+  window._obsbotWaypoints = wps;
+  document.getElementById("obsbotWpCount").textContent = wps.length;
+  const el = document.getElementById("obsbotWpList");
+  if(!wps.length) { el.innerHTML = '<div style="color:var(--text3)">No waypoints</div>'; _obsbotPopulateMonWaypoints(); return; }
+  let html = '<table style="width:100%;border-collapse:collapse">';
+  html += '<tr style="border-bottom:1px solid var(--border);font-weight:600">'
+        + '<td>#</td><td>Name</td><td>Pan</td><td>Tilt</td><td>Zoom</td><td></td></tr>';
+  wps.forEach((wp, i) => {
+    html += `<tr style="border-bottom:1px solid var(--border)">
+      <td>${i}</td><td>${wp.name}</td><td>${wp.pan}</td><td>${wp.tilt}</td><td>${wp.zoom}</td>
+      <td style="text-align:right">
+        <button class="btn btn-sm" onclick="obsbotGoto(${i})" style="padding:2px 6px">Go</button>
+        <button class="btn btn-sm red" onclick="obsbotDeleteWp(${i})" style="padding:2px 6px">&times;</button>
+      </td></tr>`;
+  });
+  html += '</table>';
+  el.innerHTML = html;
+  _obsbotPopulateMonWaypoints();
+}
+
+async function obsbotGoto(idx) {
+  const r = await api('obsbot_goto', idx);
+  if(r.error) toast(r.error,"error");
+  else toast("Moving to " + r.waypoint.name, "success");
+}
+
+async function obsbotDeleteWp(idx) {
+  const r = await api('obsbot_delete_waypoint', idx);
+  if(r.error) { toast(r.error,"error"); return; }
+  toast("Deleted: " + r.removed.name, "success");
+  obsbotRefreshWaypoints();
+}
+
+async function obsbotCapture() {
+  if(!obsbotConnected) { toast("Connect OBSBOT first","error"); return; }
+  const r = await api('obsbot_capture');
+  if(r.error) { toast(r.error,"error"); return; }
+  toast("Captured: " + r.path, "success");
+}
+
+async function obsbotRunSequence() {
+  if(!obsbotConnected) { toast("Connect OBSBOT first","error"); return; }
+  const dwell = parseFloat(document.getElementById("obsbotDwell").value) || 3;
+  const r = await api('obsbot_run_sequence', dwell);
+  if(r.error) { toast(r.error,"error"); return; }
+  document.getElementById("obsbotSeqBadge").textContent = "Running";
+  document.getElementById("obsbotSeqBadge").classList.add("on");
+  toast("Sequence started: " + r.waypoints + " waypoints", "success");
+}
+
+async function obsbotStopSequence() {
+  const r = await api('obsbot_stop_sequence');
+  if(r.error) toast(r.error,"error");
+  document.getElementById("obsbotSeqBadge").textContent = "Idle";
+  document.getElementById("obsbotSeqBadge").classList.remove("on");
+  document.getElementById("obsbotSeqProgress").textContent = "Stopped";
+}
+
+onEvent("onObsbotProgress", function(name, idx, total, status) {
+  document.getElementById("obsbotSeqProgress").textContent =
+    `[${idx+1}/${total}] ${name}: ${status}`;
+});
+
+onEvent("onObsbotSequenceDone", function(filenames, error) {
+  document.getElementById("obsbotSeqBadge").textContent = "Idle";
+  document.getElementById("obsbotSeqBadge").classList.remove("on");
+  if(error) {
+    document.getElementById("obsbotSeqProgress").textContent = "Error: " + error;
+  } else {
+    document.getElementById("obsbotSeqProgress").textContent =
+      "Done: " + (filenames ? filenames.length : 0) + " captures";
+    toast("Sequence complete", "success");
+  }
+});
+
+/* ── Incubator Monitor ───────────────────────────────────────────────── */
+
+function _obsbotPopulateMonWaypoints() {
+  const sel = document.getElementById("obsbotMonWaypoint");
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">(current position)</option>';
+  (window._obsbotWaypoints || []).forEach(wp => {
+    const opt = document.createElement("option");
+    opt.value = wp.name; opt.textContent = wp.name;
+    sel.appendChild(opt);
+  });
+  sel.value = prev;
+}
+
+function _obsbotShowReading(reading) {
+  const vals = document.getElementById("obsbotMonValues");
+  vals.style.display = "flex";
+  document.getElementById("obsbotMonTemp").textContent =
+    reading.temperature != null ? reading.temperature : "--";
+  document.getElementById("obsbotMonCo2").textContent =
+    reading.co2 != null ? reading.co2 : "--";
+
+  const el = document.getElementById("obsbotMonReading");
+  el.textContent = reading.timestamp + "  |  raw: " + (reading.raw_text || "");
+
+  if(reading.image) {
+    const img = document.getElementById("obsbotMonImage");
+    img.src = "data:image/jpeg;base64," + reading.image;
+    img.style.display = "block";
+    document.getElementById("obsbotMonPlaceholder").style.display = "none";
+    setTimeout(() => _obsbotDrawCropBoxes(), 100);
+  }
+}
+
+/* ── Crop region drawing ── */
+let _obsbotCropMode = null;  // 'temp' or 'co2' when actively drawing
+let _obsbotCropStart = null;
+let _obsbotCrops = {temp: null, co2: null};
+
+function _obsbotDrawCropBoxes() {
+  const img = document.getElementById("obsbotMonImage");
+  const wrap = document.getElementById("obsbotMonImageWrap");
+  if(!img || img.style.display==="none") return;
+  const ir = img.getBoundingClientRect();
+  const wr = wrap.getBoundingClientRect();
+  const offX = ir.left - wr.left;
+  const offY = ir.top - wr.top;
+  const iw = ir.width, ih = ir.height;
+
+  for(const key of ["temp","co2"]) {
+    const box = document.getElementById(key==="temp"?"obsbotCropTempBox":"obsbotCropCo2Box");
+    const c = _obsbotCrops[key];
+    if(!c) { box.style.display = "none"; continue; }
+    box.style.display = "block";
+    box.style.left   = (offX + c[0]*iw) + "px";
+    box.style.top    = (offY + c[1]*ih) + "px";
+    box.style.width  = ((c[2]-c[0])*iw) + "px";
+    box.style.height = ((c[3]-c[1])*ih) + "px";
+  }
+}
+
+function obsbotStartCrop(which) {
+  _obsbotCropMode = which;
+  const color = which==="temp" ? "#f80" : "#0af";
+  document.getElementById("obsbotCropOverlay").style.borderColor = color;
+  toast("Draw a rectangle on the preview image around the " +
+    (which==="temp"?"TEMPERATURE":"CO2") + " display", "info");
+}
+
+(function() {
+  const wrap = document.getElementById("obsbotMonImageWrap");
+  if(!wrap) return;
+
+  wrap.addEventListener("mousedown", function(e) {
+    if(!_obsbotCropMode) return;
+    e.preventDefault();
+    const img = document.getElementById("obsbotMonImage");
+    if(!img || img.style.display==="none") return;
+    const ir = img.getBoundingClientRect();
+    _obsbotCropStart = {x: e.clientX, y: e.clientY, ir: ir};
+    const ov = document.getElementById("obsbotCropOverlay");
+    ov.style.display = "block";
+    ov.style.left = (e.clientX - wrap.getBoundingClientRect().left) + "px";
+    ov.style.top = (e.clientY - wrap.getBoundingClientRect().top) + "px";
+    ov.style.width = "0"; ov.style.height = "0";
+  });
+
+  wrap.addEventListener("mousemove", function(e) {
+    if(!_obsbotCropStart) return;
+    const wr = wrap.getBoundingClientRect();
+    const ov = document.getElementById("obsbotCropOverlay");
+    const x1 = Math.min(_obsbotCropStart.x, e.clientX) - wr.left;
+    const y1 = Math.min(_obsbotCropStart.y, e.clientY) - wr.top;
+    const w = Math.abs(e.clientX - _obsbotCropStart.x);
+    const h = Math.abs(e.clientY - _obsbotCropStart.y);
+    ov.style.left = x1+"px"; ov.style.top = y1+"px";
+    ov.style.width = w+"px"; ov.style.height = h+"px";
+  });
+
+  wrap.addEventListener("mouseup", async function(e) {
+    if(!_obsbotCropStart || !_obsbotCropMode) return;
+    const ir = _obsbotCropStart.ir;
+    const x1f = Math.max(0, Math.min(1, (Math.min(_obsbotCropStart.x, e.clientX) - ir.left) / ir.width));
+    const y1f = Math.max(0, Math.min(1, (Math.min(_obsbotCropStart.y, e.clientY) - ir.top) / ir.height));
+    const x2f = Math.max(0, Math.min(1, (Math.max(_obsbotCropStart.x, e.clientX) - ir.left) / ir.width));
+    const y2f = Math.max(0, Math.min(1, (Math.max(_obsbotCropStart.y, e.clientY) - ir.top) / ir.height));
+
+    if(x2f - x1f < 0.01 || y2f - y1f < 0.01) {
+      _obsbotCropStart = null; _obsbotCropMode = null;
+      document.getElementById("obsbotCropOverlay").style.display = "none";
+      return;
+    }
+
+    const which = _obsbotCropMode;
+    const r = await api('obsbot_monitor_set_crop', which, x1f, y1f, x2f, y2f);
+    if(r.error) { toast(r.error,"error"); } else {
+      _obsbotCrops[which] = [x1f, y1f, x2f, y2f];
+      const pct = v => (v*100).toFixed(0) + "%";
+      const label = `${pct(x1f)},${pct(y1f)} - ${pct(x2f)},${pct(y2f)}`;
+      document.getElementById(which==="temp"?"obsbotCropTempStatus":"obsbotCropCo2Status").textContent = label;
+      toast((which==="temp"?"Temperature":"CO2") + " crop region set", "success");
+    }
+
+    _obsbotCropStart = null; _obsbotCropMode = null;
+    document.getElementById("obsbotCropOverlay").style.display = "none";
+    _obsbotDrawCropBoxes();
+  });
+})();
+
+async function _obsbotLoadCrops() {
+  const r = await api('obsbot_monitor_get_crops');
+  if(!r.ok) return;
+  _obsbotCrops = r.crops || {temp:null, co2:null};
+  for(const key of ["temp","co2"]) {
+    const c = _obsbotCrops[key];
+    const el = document.getElementById(key==="temp"?"obsbotCropTempStatus":"obsbotCropCo2Status");
+    if(c) {
+      const pct = v => (v*100).toFixed(0) + "%";
+      el.textContent = `${pct(c[0])},${pct(c[1])} - ${pct(c[2])},${pct(c[3])}`;
+    } else {
+      el.textContent = "not set";
+    }
+  }
+}
+
+async function obsbotMonStart() {
+  if(!obsbotConnected) { toast("Connect OBSBOT first","error"); return; }
+  const interval = document.getElementById("obsbotMonInterval").value;
+  const wp = document.getElementById("obsbotMonWaypoint").value;
+  const r = await api('obsbot_monitor_start', parseFloat(interval), wp);
+  if(r.error) { toast(r.error,"error"); return; }
+  document.getElementById("obsbotMonBadge").textContent = "Running";
+  document.getElementById("obsbotMonBadge").classList.add("on");
+  document.getElementById("obsbotMonStartBtn").textContent = "Running...";
+  document.getElementById("obsbotMonStartBtn").disabled = true;
+  toast("Incubator monitor started: every " + interval + " min", "success");
+}
+
+async function obsbotMonStop() {
+  const r = await api('obsbot_monitor_stop');
+  if(r.error) { toast(r.error,"error"); return; }
+  document.getElementById("obsbotMonBadge").textContent = "Off";
+  document.getElementById("obsbotMonBadge").classList.remove("on");
+  document.getElementById("obsbotMonStartBtn").textContent = "Start Monitor";
+  document.getElementById("obsbotMonStartBtn").disabled = false;
+  toast("Incubator monitor stopped", "success");
+}
+
+async function obsbotMonSnapNow() {
+  if(!obsbotConnected) { toast("Connect OBSBOT first","error"); return; }
+  toast("Taking incubator reading...", "info");
+  const r = await api('obsbot_monitor_snap_now');
+  if(r.error) { toast(r.error,"error"); return; }
+  _obsbotShowReading(r);
+  toast("Reading captured", "success");
+}
+
+onEvent("onIncubatorReading", function(ts, temp, co2, rawText) {
+  _obsbotShowReading({timestamp: ts, temperature: temp, co2: co2, raw_text: rawText, image: null});
+  api('obsbot_monitor_latest').then(r => {
+    if(r.ok && r.reading) _obsbotShowReading(r.reading);
+  });
 });
 </script>
 </body>
