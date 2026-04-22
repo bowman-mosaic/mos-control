@@ -705,6 +705,7 @@ option { background:#fff; }
             <option value="">Load saved...</option>
           </select>
           <button class="btn btn-sm red" onclick="expDeleteSelected()" title="Delete selected experiment">&times;</button>
+          <button class="btn btn-sm" onclick="tlClearAll()" title="Clear all events and lanes" style="margin-left:8px">Clear All</button>
         </div>
         <div class="tl-layout">
 
@@ -2144,9 +2145,11 @@ const TL_LABELS = {
 
 function tlSaveEvents() {
   localStorage.setItem("mosaic_tl_events", JSON.stringify(tlEvents));
+  api('config_save', 'timeline_events', tlEvents).catch(()=>{});
 }
 function tlSaveLanes() {
   localStorage.setItem("mosaic_tl_lanes", JSON.stringify(tlLanes));
+  api('config_save', 'timeline_lanes', tlLanes).catch(()=>{});
 }
 function tlPxPerSec() {
   const slider = parseFloat(document.getElementById("tlZoom").value) || 30;
@@ -2195,6 +2198,12 @@ function tlUpdateTotalTime() {
   } else {
     el.textContent = `${tlFormatDuration(cycle)} \u00d7 ${reps} = ${tlFormatDuration(total)}`;
   }
+  api('config_save', 'timeline_settings', {
+    cycleDuration: parseFloat(document.getElementById("tlDuration").value) || 60,
+    cycleDurationUnit: document.getElementById("tlDurUnit").value,
+    repeatCount: parseInt(document.getElementById("tlRepeat").value) || 1,
+    forever: document.getElementById("tlForever").checked,
+  }).catch(()=>{});
 }
 
 function _tlCavroConflict(lane, e) {
@@ -2732,10 +2741,10 @@ function tlOpenEditor(ev) {
       <div class="field" style="margin:0">
         <label>From</label>
         <input type="number" id="tlEdCavroFrom" value="${ev.fromPort||1}" min="1" max="6"
-               style="width:44px" oninput="tlEditorChanged()">
+               style="width:54px" oninput="tlEditorChanged()">
         <label style="min-width:auto">To</label>
         <input type="number" id="tlEdCavroTo" value="${ev.toPort||2}" min="1" max="6"
-               style="width:44px" oninput="tlEditorChanged()">
+               style="width:54px" oninput="tlEditorChanged()">
       </div>
       <div class="field" style="margin:0">
         <label>Vol mL</label>
@@ -2756,10 +2765,10 @@ function tlOpenEditor(ev) {
       <div class="field" style="margin:0">
         <label>From</label>
         <input type="number" id="tlEdCavroFrom" value="${ev.fromPort||1}" min="1" max="6"
-               style="width:44px" oninput="tlEditorChanged()">
+               style="width:54px" oninput="tlEditorChanged()">
         <label style="min-width:auto">To</label>
         <input type="number" id="tlEdCavroTo" value="${ev.toPort||2}" min="1" max="6"
-               style="width:44px" oninput="tlEditorChanged()">
+               style="width:54px" oninput="tlEditorChanged()">
       </div>
       <div class="field" style="margin:0">
         <label>Vel</label>
@@ -2782,19 +2791,19 @@ function tlOpenEditor(ev) {
         <label>Input Pump</label>
         <span style="font-size:10px;color:var(--text3)">from</span>
         <input type="number" id="tlEdCavroFrom" value="${ev.fromPort||1}" min="1" max="6"
-               style="width:38px" oninput="tlEditorChanged()">
+               style="width:54px" oninput="tlEditorChanged()">
         <span style="font-size:10px;color:var(--text3)">to</span>
         <input type="number" id="tlEdCavroTo" value="${ev.toPort||2}" min="1" max="6"
-               style="width:38px" oninput="tlEditorChanged()">
+               style="width:54px" oninput="tlEditorChanged()">
       </div>
       <div class="field" style="margin:0">
         <label>Output Pump</label>
         <span style="font-size:10px;color:var(--text3)">from</span>
         <input type="number" id="tlEdCavroOutFrom" value="${ev.outFromPort||1}" min="1" max="6"
-               style="width:38px" oninput="tlEditorChanged()">
+               style="width:54px" oninput="tlEditorChanged()">
         <span style="font-size:10px;color:var(--text3)">to</span>
         <input type="number" id="tlEdCavroOutTo" value="${ev.outToPort||3}" min="1" max="6"
-               style="width:38px" oninput="tlEditorChanged()">
+               style="width:54px" oninput="tlEditorChanged()">
       </div>
       <div class="field" style="margin:0">
         <label>Vel</label>
@@ -2810,10 +2819,10 @@ function tlOpenEditor(ev) {
       <div class="field" style="margin:0">
         <label>Inlet</label>
         <input type="number" id="tlEdCavroFrom" value="${ev.fromPort||1}" min="1" max="6"
-               style="width:44px" oninput="tlEditorChanged()">
+               style="width:54px" oninput="tlEditorChanged()">
         <label style="min-width:auto">Outlet</label>
         <input type="number" id="tlEdCavroTo" value="${ev.toPort||2}" min="1" max="6"
-               style="width:44px" oninput="tlEditorChanged()">
+               style="width:54px" oninput="tlEditorChanged()">
       </div>` : ''}
     </div>`;
   } else {
@@ -3230,11 +3239,17 @@ async function tlRunCycle(sorted, progress) {
             await api('cavro_dispense', ci, ev.volume||0.5, ev.fromPort||1, ev.toPort||2, vel);
           } else if(act === 'continuous') {
             await api('cavro_continuous_start', ci, ev.fromPort||1, ev.toPort||2, vel, 0);
+            const durMs = (ev.duration || 60) * 1000;
+            await tlSleep(Math.min(durMs, maxMs));
+            await api('cavro_continuous_stop', ci);
           } else if(act === 'coordinated') {
             const pi = parseInt(ev.partnerIdx) || 1;
             await api('cavro_coordinated_start', ci, pi,
               parseInt(ev.fromPort)||1, parseInt(ev.toPort)||2,
               parseInt(ev.outFromPort)||1, parseInt(ev.outToPort)||3, vel);
+            const durMs = (ev.duration || 60) * 1000;
+            await tlSleep(Math.min(durMs, maxMs));
+            await api('cavro_coordinated_stop');
           }
         } else {
           await tlApplyPresets(ev);
@@ -3420,18 +3435,53 @@ function tlStop() {
   tlAbort = true;
 }
 
+function tlClearAll() {
+  if(!confirm("Clear all timeline events?")) return;
+  tlEvents = [];
+  tlSelectedId = null;
+  document.getElementById("tlEditor").classList.remove("open");
+  tlSaveEvents();
+  tlRender();
+  toast("Timeline cleared","info");
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    INIT
    ═══════════════════════════════════════════════════════════════════════════ */
-buildPumps();
-refreshPorts();
-renderMsPresets();
-renderAcqPresets();
-refreshAcqDropdowns();
-tlRender();
-tlUpdateTotalTime();
-expRefreshList();
-logMsg("Mosaic Control Center ready","sys");
+(async function init() {
+  try {
+    const res = await api('config_load_all');
+    if(res && res.data) {
+      const d = res.data;
+      if(d.timeline_events) {
+        tlEvents = d.timeline_events.filter(e => e.type !== 'pump');
+        localStorage.setItem("mosaic_tl_events", JSON.stringify(tlEvents));
+      }
+      if(d.timeline_lanes) {
+        tlLanes = d.timeline_lanes.filter(l => l.type !== 'pump');
+        localStorage.setItem("mosaic_tl_lanes", JSON.stringify(tlLanes));
+      }
+      if(d.timeline_settings) {
+        const s = d.timeline_settings;
+        if(s.cycleDuration != null)     document.getElementById("tlDuration").value  = s.cycleDuration;
+        if(s.cycleDurationUnit)         document.getElementById("tlDurUnit").value   = s.cycleDurationUnit;
+        if(s.repeatCount != null)       document.getElementById("tlRepeat").value    = s.repeatCount;
+        if(s.forever != null)           document.getElementById("tlForever").checked = s.forever;
+      }
+    }
+  } catch(e) {
+    console.warn("Config load failed, using localStorage:", e);
+  }
+  buildPumps();
+  refreshPorts();
+  renderMsPresets();
+  renderAcqPresets();
+  refreshAcqDropdowns();
+  tlRender();
+  tlUpdateTotalTime();
+  expRefreshList();
+  logMsg("Mosaic Control Center ready","sys");
+})();
 
 /* ═══════════════════════════════════════════════════════════════════════════
    NPY VIEWER

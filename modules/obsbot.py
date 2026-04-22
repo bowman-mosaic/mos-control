@@ -52,7 +52,8 @@ VISCA_PORT = 52381
 SEQ_MAX = 2**32 - 1
 
 _BASE_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
-WAYPOINTS_FILE = os.path.join(_BASE_DIR, "Obs_bot", "waypoints.json")
+import modules.config as _cfg
+WAYPOINTS_FILE = os.path.join(_BASE_DIR, "Obs_bot", "waypoints.json")  # legacy
 CAPTURES_DIR = os.path.join(_BASE_DIR, "captures", "obsbot")
 
 
@@ -405,17 +406,19 @@ def snap_jpeg() -> bytes:
 
 def _load_waypoints():
     global _waypoints
-    if os.path.exists(WAYPOINTS_FILE):
+    data = _cfg.load("obsbot_waypoints")
+    if data is not None:
+        _waypoints = data
+    elif os.path.exists(WAYPOINTS_FILE):
         with open(WAYPOINTS_FILE, "r") as f:
             _waypoints = json.load(f)
+        _cfg.save("obsbot_waypoints", _waypoints)
     else:
         _waypoints = []
 
 
 def _save_waypoints():
-    os.makedirs(os.path.dirname(WAYPOINTS_FILE), exist_ok=True)
-    with open(WAYPOINTS_FILE, "w") as f:
-        json.dump(_waypoints, f, indent=2)
+    _cfg.save("obsbot_waypoints", _waypoints)
 
 
 # ── RTSP frame capture ──────────────────────────────────────────────────────
@@ -759,24 +762,27 @@ _mon_stop = threading.Event()
 _mon_latest = None   # dict with parsed readings
 
 _CROP_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                          "..", "Obs_bot", "monitor_crops.json")
+                          "..", "Obs_bot", "monitor_crops.json")  # legacy
 _crops = {"temp": None, "co2": None}  # each is [x1,y1,x2,y2] or None
 _paddle_ocr = None  # lazy-init PaddleOCR instance
 
 
 def _load_crops():
     global _crops
+    data = _cfg.load("obsbot_crops")
+    if data is not None:
+        _crops = data
+        return
     try:
         if os.path.exists(_CROP_FILE):
             with open(_CROP_FILE, "r") as f:
                 _crops = json.load(f)
+            _cfg.save("obsbot_crops", _crops)
     except Exception:
         pass
 
 def _save_crops():
-    os.makedirs(os.path.dirname(_CROP_FILE), exist_ok=True)
-    with open(_CROP_FILE, "w") as f:
-        json.dump(_crops, f, indent=2)
+    _cfg.save("obsbot_crops", _crops)
 
 _load_crops()
 
@@ -956,43 +962,58 @@ def _read_display(jpeg_bytes: bytes) -> dict:
     }
 
 
-def _do_reading(jpeg: bytes, save_dir: str = None) -> dict:
-    """Process a single reading: OCR + save image + CSV row.
+def _do_reading(save_dir: str = None) -> dict:
+    """Take 4 snapshots, OCR each, use the mode for temp and CO2, log to CSV."""
+    from collections import Counter
 
-    If save_dir is provided, the image and CSV are written there instead of
-    the default MONITOR_DIR (used by timeline integration).
-    """
+    temps = []
+    co2s = []
+    raw_parts = []
+    last_jpeg = None
+
+    for i in range(4):
+        try:
+            jpeg = snap_jpeg()
+            last_jpeg = jpeg
+            parsed = _read_display(jpeg)
+            if parsed["temperature"] is not None:
+                temps.append(parsed["temperature"])
+            if parsed["co2"] is not None:
+                co2s.append(parsed["co2"])
+            raw_parts.append(parsed["raw"])
+        except Exception as e:
+            log.error("Reading attempt %d failed: %s", i + 1, e)
+            raw_parts.append(f"attempt{i+1}=ERR:{e}")
+        if i < 3:
+            time.sleep(0.5)
+
+    temp_val = Counter(temps).most_common(1)[0][0] if temps else None
+    co2_val = Counter(co2s).most_common(1)[0][0] if co2s else None
+
     ts = datetime.now()
     ts_str = ts.strftime("%Y-%m-%d %H:%M:%S")
-    ts_file = ts.strftime("%Y%m%d_%H%M%S")
+    temp_s = "" if temp_val is None else str(temp_val)
+    co2_s = "" if co2_val is None else str(co2_val)
+    raw_all = " | ".join(raw_parts)
+    raw_esc = raw_all.replace('"', '""')
 
     out_dir = save_dir or MONITOR_DIR
     os.makedirs(out_dir, exist_ok=True)
-    img_name = f"incubator_{ts_file}.jpg"
-    img_path = os.path.join(out_dir, img_name)
-    with open(img_path, "wb") as f:
-        f.write(jpeg)
-
-    parsed = _read_display(jpeg)
-    temp_s = "" if parsed["temperature"] is None else str(parsed["temperature"])
-    co2_s = "" if parsed["co2"] is None else str(parsed["co2"])
-    raw_esc = parsed["raw"].replace('"', '""')
 
     csv_path = os.path.join(out_dir, "incubator_readings.csv")
     write_header = not os.path.exists(csv_path)
     with open(csv_path, "a", newline="", encoding="utf-8") as csv_f:
         if write_header:
-            csv_f.write("timestamp,temperature,co2,raw_ocr,image_file\n")
-        csv_f.write(f'{ts_str},{temp_s},{co2_s},"{raw_esc}",{img_name}\n')
+            csv_f.write("timestamp,temperature,co2,raw_ocr\n")
+        csv_f.write(f'{ts_str},{temp_s},{co2_s},"{raw_esc}"\n')
 
-    b64 = base64.b64encode(jpeg).decode("ascii")
+    b64 = base64.b64encode(last_jpeg).decode("ascii") if last_jpeg else ""
     return {
         "timestamp": ts_str,
-        "temperature": parsed["temperature"],
-        "co2": parsed["co2"],
-        "raw_text": parsed["raw"],
+        "temperature": temp_val,
+        "co2": co2_val,
+        "raw_text": raw_all,
         "image": b64,
-        "image_file": img_name,
     }
 
 
@@ -1012,13 +1033,11 @@ def _monitor_loop(interval_s: float, waypoint_name: str):
 
         while not _mon_stop.is_set():
             try:
-                jpeg = snap_jpeg()
+                reading = _do_reading()
             except Exception as e:
-                log.error("Monitor snap failed: %s", e)
+                log.error("Monitor reading failed: %s", e)
                 _mon_stop.wait(timeout=60)
                 continue
-
-            reading = _do_reading(jpeg)
             _mon_latest = reading
 
             push_event("onIncubatorReading", reading["timestamp"],
@@ -1089,11 +1108,9 @@ def obsbot_monitor_snap_now():
     if _cam is None:
         return {"error": "Not connected"}
     try:
-        jpeg = snap_jpeg()
+        reading = _do_reading()
     except Exception as e:
-        return {"error": f"Snap failed: {e}"}
-
-    reading = _do_reading(jpeg)
+        return {"error": f"Reading failed: {e}"}
     return {"ok": True, **reading}
 
 
@@ -1107,11 +1124,9 @@ def obsbot_incubator_reading(save_dir=""):
     if _cam is None:
         return {"error": "OBSBOT not connected"}
     try:
-        jpeg = snap_jpeg()
+        reading = _do_reading(save_dir=save_dir or None)
     except Exception as e:
-        return {"error": f"Snap failed: {e}"}
-
-    reading = _do_reading(jpeg, save_dir=save_dir or None)
+        return {"error": f"Reading failed: {e}"}
     push_event("onIncubatorReading", reading["timestamp"],
                reading.get("temperature"), reading.get("co2"),
                reading["raw_text"])

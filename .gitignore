@@ -10,6 +10,7 @@ exports/
 *.npy
 
 Obs_bot/
+config/
 
 .env
 .vscode/

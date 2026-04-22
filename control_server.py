@@ -27,6 +27,7 @@ import modules.nikon_ti                # noqa: F401
 import modules.coolsnap                # noqa: F401
 import modules.intensilight            # noqa: F401
 import modules.obsbot                  # noqa: F401
+import modules.config                  # noqa: F401
 
 from flask import Response, jsonify
 from flask_sock import Sock
