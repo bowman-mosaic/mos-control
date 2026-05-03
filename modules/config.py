@@ -2,8 +2,8 @@
 Persistent configuration store.
 
 Modular configuration system:
-- Each module (camera, microscope, presets, timeline, cavro, obsbot) has its
-  own folder under ``config/modules/<module>/`` with per-name JSON files.
+- Each module (imaging, timeline, cavro, obsbot) has its own folder under
+  ``config/modules/<module>/`` with per-name JSON files.
 - A master config under ``config/masters/<name>.json`` references module
   configs by name.
 """
@@ -28,7 +28,7 @@ MASTERS_DIR = os.path.join(CONFIG_DIR, "masters")
 os.makedirs(MODULES_DIR, exist_ok=True)
 os.makedirs(MASTERS_DIR, exist_ok=True)
 
-MODULES = ("camera", "imaging", "timeline", "cavro", "obsbot")
+MODULES = ("imaging", "timeline", "cavro", "obsbot")
 for _m in MODULES:
     os.makedirs(os.path.join(MODULES_DIR, _m), exist_ok=True)
 

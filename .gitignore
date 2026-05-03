@@ -16,3 +16,4 @@ config/
 .vscode/
 .idea/
 .cursor/
+.commit-msg.tmp

@@ -708,12 +708,6 @@ option { background:#fff; }
       <!-- ════════ CAMERA SETUP ════════ -->
       <section id="panel-cam-setup" class="panel">
         <div class="panel-title">Camera Setup</div>
-        <div class="module-cfg-picker">
-          <label>Camera config</label>
-          <select id="cfgPicker_camera"></select>
-          <button class="btn btn-sm" onclick="moduleCfgLoad('camera')">Load</button>
-          <button class="btn btn-sm accent" onclick="moduleCfgSaveAs('camera')">Save As</button>
-        </div>
         <div class="cam-setup-grid">
 
           <!-- CoolSNAP Connection -->
@@ -2613,41 +2607,21 @@ function renderMsPresets() {
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MODULAR CONFIGURATION
-   - 5 module configs: camera, imaging, timeline, cavro, obsbot
+   - 4 module configs: imaging, timeline, cavro, obsbot
    - Master configs reference module configs by name (mix-and-match)
    - Per-panel pickers let you swap a single module mid-session
    ═══════════════════════════════════════════════════════════════════════════ */
-const CFG_MODULES = ["camera", "imaging", "timeline", "cavro", "obsbot"];
+const CFG_MODULES = ["imaging", "timeline", "cavro", "obsbot"];
 const CFG_MODULE_LABELS = {
-  camera: "Camera", imaging: "Imaging",
+  imaging: "Imaging",
   timeline: "Timeline", cavro: "Cavro", obsbot: "OBSBOT"
 };
 
 let _activeMaster = null;   // name of currently loaded master (or null)
-let _activeModule = { camera:null, imaging:null,
+let _activeModule = { imaging:null,
                       timeline:null, cavro:null, obsbot:null };
 
 // ── Per-module gather/restore ───────────────────────────────────────────────
-
-function camGatherConfig() {
-  const exp = parseInt(document.getElementById("scopeExposure")?.value);
-  const bin = parseInt(document.getElementById("scopeBinning")?.value);
-  return {
-    exposure_ms: Number.isFinite(exp) ? exp : null,
-    binning: Number.isFinite(bin) ? bin : null,
-  };
-}
-async function camRestoreConfig(p) {
-  if(!p) return;
-  if(p.exposure_ms != null) {
-    document.getElementById("scopeExposure").value = p.exposure_ms;
-    if(scopeCamConnected) await api('cam_set_exposure', p.exposure_ms).catch(()=>{});
-  }
-  if(p.binning != null) {
-    document.getElementById("scopeBinning").value = p.binning;
-    if(scopeCamConnected) await api('cam_set_binning', p.binning).catch(()=>{});
-  }
-}
 
 function imagingGatherConfig() {
   return {
@@ -2747,7 +2721,6 @@ async function obsbotRestoreConfig(p) {
 }
 
 const MODULE_HANDLERS = {
-  camera:     { gather: camGatherConfig,    restore: camRestoreConfig },
   imaging:    { gather: imagingGatherConfig,restore: imagingRestoreConfig },
   timeline:   { gather: tlGatherConfig,     restore: tlRestoreConfig },
   cavro:      { gather: cavroGatherConfig,  restore: cavroRestoreConfig },
@@ -4251,14 +4224,18 @@ function tlSleep(ms) {
 }
 
 async function tlRunCycle(sorted, progress) {
+  // cycleDur is captured once because the cycle's wall-clock duration is
+  // fixed for this run. pps (pixels-per-second), however, is recomputed on
+  // every animation frame so the playhead's position AND velocity stay in
+  // sync with the user dragging the zoom slider mid-playback.
   const cycleDur = tlCycleSec();
-  const pps = tlPxPerSec();
   const ph = document.getElementById("tlPlayhead");
   const cycleT0 = performance.now();
 
   const playheadLoop = () => {
     if(!tlRunning) return;
     const elSec = (performance.now() - cycleT0) / 1000;
+    const pps = tlPxPerSec();
     ph.style.left = (56 + Math.min(elSec, cycleDur) * pps) + 'px';
     if(elSec < cycleDur && !tlAbort) requestAnimationFrame(playheadLoop);
   };
@@ -4267,8 +4244,40 @@ async function tlRunCycle(sorted, progress) {
   const deadline = cycleT0 + cycleDur * 1000;
   function timeLeft() { return Math.max(0, deadline - performance.now()); }
 
-  // Launch events at their scheduled times
-  for(const ev of sorted) {
+  // Track every fire-and-forget event Promise so we can await them before
+  // moving on. Without this, a late per-event stop from cycle N can race
+  // cycle N+1's start, halting the new pump mid-pre-fill and triggering
+  // the thread's "final flush" (push to 0 via inlet port).
+  const eventPromises = [];
+
+  // Precompute the "halt boundary" for each event: the wall-clock time
+  // (seconds from cycle start) at which something else will naturally halt
+  // this event — either the next conflicting event's start (which will run
+  // through cavro_*_start's "halt previous thread, start new" path) or the
+  // cycle end (which fires tlStopAllHardware). When the event's own
+  // duration ends at or after this boundary, launchEvent skips its per-
+  // event stop call so it can't race the next event's start.
+  // Conflict rules (matching the backend's single-thread resources):
+  //   - 'coordinated' conflicts with any other 'coordinated' event
+  //     (single global _coord_thread)
+  //   - 'continuous' conflicts with another 'continuous' event on the
+  //     SAME pump (per-pump _cont_threads[idx])
+  function _nextHaltBoundary(ev, idx) {
+    if(ev.type !== 'cavro') return cycleDur;
+    const act = ev.cavroAction || 'dispense';
+    for(let j = idx + 1; j < sorted.length; j++) {
+      const nv = sorted[j];
+      if(nv.type !== 'cavro') continue;
+      const nact = nv.cavroAction || 'dispense';
+      if(act === 'coordinated' && nact === 'coordinated') return nv.start;
+      if(act === 'continuous' && nact === 'continuous' &&
+         parseInt(nv.cavroIdx) === parseInt(ev.cavroIdx)) return nv.start;
+    }
+    return cycleDur;
+  }
+
+  for(let i = 0; i < sorted.length; i++) {
+    const ev = sorted[i];
     if(tlAbort || timeLeft() <= 0) break;
     const elapsed = (performance.now() - cycleT0) / 1000;
     const wait = ev.start - elapsed;
@@ -4276,15 +4285,33 @@ async function tlRunCycle(sorted, progress) {
       await tlSleep(Math.min(wait * 1000, timeLeft()));
       if(tlAbort || timeLeft() <= 0) break;
     }
-    launchEvent(ev, timeLeft(), progress);
+    const boundarySec = _nextHaltBoundary(ev, i);
+    const elapsedNow = (performance.now() - cycleT0) / 1000;
+    const boundaryMs = Math.max(0, (boundarySec - elapsedNow) * 1000);
+    const p = launchEvent(ev, boundaryMs, progress);
+    if(p) eventPromises.push(p.catch(() => {}));
   }
 
   // Wait for remaining cycle time
   if(timeLeft() > 100 && !tlAbort) await tlSleep(timeLeft());
 
+  // Drain any in-flight event Promises (their per-event stop calls or
+  // capture cleanups) BEFORE the global stop sweep, so cycle N's late
+  // backend calls can't bleed into cycle N+1.
+  if(eventPromises.length) await Promise.all(eventPromises);
+
   await tlStopAllHardware(sorted);
 
   function launchEvent(ev, maxMs, progress) {
+    // maxMs here is the "halt boundary" for this event: ms until the next
+    // thing that will naturally halt it — the next conflicting cavro event's
+    // start (which runs through cavro_*_start's halt-and-replace path) or
+    // tlStopAllHardware at cycle end. If the event's own duration ends at or
+    // after this boundary, we skip the per-event stop entirely. Otherwise a
+    // late stop call from THIS event would race the NEXT event's start and
+    // halt it mid-pre-fill (deterministic kill of the third event in any
+    // back-to-back coordinated chain).
+    const STOP_MARGIN_MS = 1500;
     const run = async () => {
       try {
         logMsg(`Event "${ev.name}" (${ev.type}) executing`, "exp");
@@ -4307,16 +4334,22 @@ async function tlRunCycle(sorted, progress) {
           } else if(act === 'continuous') {
             await api('cavro_continuous_start', ci, ev.fromPort||1, ev.toPort||2, vel, 0);
             const durMs = (ev.duration || 60) * 1000;
-            await tlSleep(Math.min(durMs, maxMs));
-            await api('cavro_continuous_stop', ci);
+            const sleepMs = Math.min(durMs, maxMs);
+            if(sleepMs + STOP_MARGIN_MS <= maxMs) {
+              await tlSleep(sleepMs);
+              await api('cavro_continuous_stop', ci);
+            }
           } else if(act === 'coordinated') {
             const pi = parseInt(ev.partnerIdx) || 1;
             await api('cavro_coordinated_start', ci, pi,
               parseInt(ev.fromPort)||1, parseInt(ev.toPort)||2,
               parseInt(ev.outFromPort)||1, parseInt(ev.outToPort)||3, vel);
             const durMs = (ev.duration || 60) * 1000;
-            await tlSleep(Math.min(durMs, maxMs));
-            await api('cavro_coordinated_stop');
+            const sleepMs = Math.min(durMs, maxMs);
+            if(sleepMs + STOP_MARGIN_MS <= maxMs) {
+              await tlSleep(sleepMs);
+              await api('cavro_coordinated_stop');
+            }
           } else if(act === 'dualpush') {
             const pi = parseInt(ev.partnerIdx) || 1;
             const oi = parseInt(ev.outletIdx) || 2;
@@ -4325,8 +4358,11 @@ async function tlRunCycle(sorted, progress) {
               parseInt(ev.in2FromPort)||1, parseInt(ev.in2ToPort)||2,
               parseInt(ev.outFromPort)||1, parseInt(ev.outToPort)||3, vel);
             const durMs = (ev.duration || 60) * 1000;
-            await tlSleep(Math.min(durMs, maxMs));
-            await api('cavro_dualpush_stop');
+            const sleepMs = Math.min(durMs, maxMs);
+            if(sleepMs + STOP_MARGIN_MS <= maxMs) {
+              await tlSleep(sleepMs);
+              await api('cavro_dualpush_stop');
+            }
           }
         } else {
           await tlApplyPresets(ev);
@@ -4378,7 +4414,7 @@ async function tlRunCycle(sorted, progress) {
         logMsg(`Event "${ev.name}" error: ${err}`, "error");
       }
     };
-    run();
+    return run();
   }
 }
 
@@ -4395,11 +4431,16 @@ async function tlStopCaptures(sorted) {
 }
 
 async function tlStopAllHardware(sorted) {
+  // Stop only the pump activities that were actually running in this cycle.
+  // Each per-event stop (cavro_continuous_stop / cavro_coordinated_stop /
+  // cavro_dualpush_stop) signals its background thread to exit, which then
+  // runs the thread's natural "final flush" — pushing the syringe back to 0
+  // via the inlet port at max velocity. This is the same logic used between
+  // pump events. Idle pumps are deliberately left untouched (no halt, no
+  // global flush) so the end-of-cycle cleanup never looks like a home.
   const stops = [];
-  let hasCavro = false;
   for(const ev of sorted) {
     if(ev.type === 'cavro') {
-      hasCavro = true;
       const ci = parseInt(ev.cavroIdx) || 0;
       if(ev.cavroAction === 'continuous' && !stops._contSeen?.has(ci)) {
         (stops._contSeen = stops._contSeen || new Set()).add(ci);
@@ -4421,7 +4462,6 @@ async function tlStopAllHardware(sorted) {
       }
     }
   }
-  if(hasCavro) stops.push(api('cavro_stop_all').catch(()=>{}));
   const off = [];
   if(scopeTiConnected) { off.push(api('ti_shutter_close').catch(()=>{})); off.push(api('ti_dia_lamp_off').catch(()=>{})); }
   if(_ilConnected) off.push(api('il_shutter_close').catch(()=>{}));
