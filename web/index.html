@@ -835,9 +835,11 @@ option { background:#fff; }
 
             <div class="stage-sep"></div>
 
-            <label>AF</label>
-            <input type="number" id="liveAfRange" value="20" step="1" title="µm range" style="width:48px">
-            <input type="number" id="liveAfSteps" value="11" step="1" min="3" title="steps" style="width:42px">
+            <label>AF range</label>
+            <input type="number" id="liveAfRange" value="20" step="1" title="Total Z scan range in µm" style="width:48px">
+            <span style="font-size:10px;color:var(--text3)">µm</span>
+            <label style="margin-left:4px">steps</label>
+            <input type="number" id="liveAfSteps" value="11" step="1" min="3" title="Number of Z positions sampled" style="width:42px">
             <button class="btn btn-sm" onclick="liveAutoFocus()" id="liveAfBtn">Auto Focus</button>
           </div>
           <div id="liveAfStatus" style="font-size:11px;color:var(--text3);padding:0 4px 4px;display:none"></div>
@@ -3524,8 +3526,8 @@ function tlRefreshEditorDropdowns() {
 }
 
 function tlEventOverhead(ev) {
-  if(ev.type === 'video') return 3;
-  if(ev.type === 'timelapse') return 3;
+  if(ev.type === 'video') return 5;
+  if(ev.type === 'timelapse') return 5;
   return 0;
 }
 
@@ -3902,9 +3904,9 @@ function tlStackCalcDuration(ev) {
   let total = 0;
   for(const pn of presets) {
     const a = imgObj[pn] || {};
-    total += 1.5 + ((a.exposure_ms || 50) / 1000);
+    total += 2.5 + ((a.exposure_ms || 50) / 1000);
   }
-  total += 0.5;
+  total += 1.5;
   return Math.ceil(total);
 }
 

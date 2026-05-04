@@ -167,6 +167,25 @@ signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 
 
+@app.route("/api/shutdown", methods=["POST", "GET"])
+def http_shutdown():
+    """Graceful shutdown trigger — used by the launcher when the browser closes.
+
+    Disconnects all hardware via _shutdown() then exits the process. Returns
+    immediately so the HTTP client does not hang on the dying server.
+    """
+    import threading
+
+    def _exit_soon():
+        try:
+            _shutdown()
+        finally:
+            os._exit(0)
+
+    threading.Timer(0.2, _exit_soon).start()
+    return jsonify({"ok": True, "shutting_down": True})
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Mosaic Control Center")
     parser.add_argument("--host", default="0.0.0.0",
