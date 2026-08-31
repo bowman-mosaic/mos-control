@@ -1672,6 +1672,9 @@ onEvent("onCavroContinuousUpdate", function(idx, status, msg) {
 onEvent("onCavroCoordinatedUpdate", function(status, msg) {
   logMsg("Cavro coord: "+msg, status==="error"?"error":"sys");
 });
+onEvent("onCavroDualPushUpdate", function(status, msg) {
+  logMsg("Cavro dual: "+msg, status==="error"?"error":"sys");
+});
 onEvent("onCavroProtocolUpdate", function(idx, step, status, msg) {
   logMsg("Cavro C"+idx+": "+msg, status==="error"?"error":"sys");
 });
@@ -4038,6 +4041,15 @@ function tlEditorChanged() {
           ev.partnerIdx = other ? other.cavroIdx : 0;
         }
       }
+      if(ev.cavroAction === 'dualpush') {
+        const others = tlLanes.filter(l => l.type==='cavro' && l.cavroIdx !== ev.cavroIdx);
+        if(ev.partnerIdx == null || ev.partnerIdx === ev.cavroIdx)
+          ev.partnerIdx = others[0] ? others[0].cavroIdx : 0;
+        if(ev.outletIdx == null || ev.outletIdx === ev.cavroIdx || ev.outletIdx === ev.partnerIdx) {
+          const out = others.find(l => l.cavroIdx !== ev.partnerIdx);
+          ev.outletIdx = out ? out.cavroIdx : 0;
+        }
+      }
       tlSaveEvents(); tlOpenEditor(ev); return;
     }
     // Speed limits
@@ -4272,6 +4284,9 @@ async function tlRunCycle(sorted, progress) {
       if(nv.type !== 'cavro') continue;
       const nact = nv.cavroAction || 'dispense';
       if(act === 'coordinated' && nact === 'coordinated') return nv.start;
+      if(act === 'dualpush' && nact === 'dualpush') return nv.start;
+      if((act === 'coordinated' && nact === 'dualpush') ||
+         (act === 'dualpush' && nact === 'coordinated')) return nv.start;
       if(act === 'continuous' && nact === 'continuous' &&
          parseInt(nv.cavroIdx) === parseInt(ev.cavroIdx)) return nv.start;
     }
@@ -4318,7 +4333,8 @@ async function tlRunCycle(sorted, progress) {
       try {
         logMsg(`Event "${ev.name}" (${ev.type}) executing`, "exp");
         if(ev.type === 'cavro') {
-          const ci = parseInt(ev.cavroIdx) || 0;
+          const _pumpIdx = (v, fb) => { const n = parseInt(v, 10); return Number.isInteger(n) ? n : fb; };
+          const ci = _pumpIdx(ev.cavroIdx, 0);
           const act = ev.cavroAction || 'dispense';
           let vel = null;
           if(ev.velocity !== '' && ev.velocity != null) {
@@ -4342,7 +4358,7 @@ async function tlRunCycle(sorted, progress) {
               await api('cavro_continuous_stop', ci);
             }
           } else if(act === 'coordinated') {
-            const pi = parseInt(ev.partnerIdx) || 1;
+            const pi = _pumpIdx(ev.partnerIdx, 1);
             await api('cavro_coordinated_start', ci, pi,
               parseInt(ev.fromPort)||1, parseInt(ev.toPort)||2,
               parseInt(ev.outFromPort)||1, parseInt(ev.outToPort)||3, vel);
@@ -4353,8 +4369,8 @@ async function tlRunCycle(sorted, progress) {
               await api('cavro_coordinated_stop');
             }
           } else if(act === 'dualpush') {
-            const pi = parseInt(ev.partnerIdx) || 1;
-            const oi = parseInt(ev.outletIdx) || 2;
+            const pi = _pumpIdx(ev.partnerIdx, 1);
+            const oi = _pumpIdx(ev.outletIdx, 2);
             await api('cavro_dualpush_start', ci, pi, oi,
               parseInt(ev.fromPort)||1, parseInt(ev.toPort)||2,
               parseInt(ev.in2FromPort)||1, parseInt(ev.in2ToPort)||2,
