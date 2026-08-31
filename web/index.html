@@ -3554,6 +3554,79 @@ function _mmssToSec(str) {
   return parseFloat(str) || 0;
 }
 
+function _tlPumpIdx(v, fb) {
+  const n = parseInt(v, 10);
+  return Number.isInteger(n) ? n : fb;
+}
+
+function _tlCavroLanes() {
+  return tlLanes.filter(l => l.type === 'cavro');
+}
+
+function _tlEnsureDualRoles(ev) {
+  const lanes = _tlCavroLanes();
+  const in1 = _tlPumpIdx(ev.cavroIdx, 0);
+  const taken = new Set([in1]);
+  const pick = (prefer) => {
+    const pref = _tlPumpIdx(prefer, null);
+    if(pref != null && lanes.some(l => Number(l.cavroIdx) === pref) && !taken.has(pref)) {
+      taken.add(pref);
+      return pref;
+    }
+    const l = lanes.find(x => !taken.has(Number(x.cavroIdx)));
+    if(!l) return pref != null ? pref : 0;
+    taken.add(Number(l.cavroIdx));
+    return Number(l.cavroIdx);
+  };
+  ev.partnerIdx = pick(ev.partnerIdx);
+  ev.outletIdx = pick(ev.outletIdx);
+}
+
+function _tlFillDualSelect(sel, selectedIdx, excludeIdxs) {
+  if(!sel) return;
+  const skip = new Set((excludeIdxs || []).map(Number));
+  const lanes = _tlCavroLanes().filter(l => !skip.has(Number(l.cavroIdx)));
+  const want = _tlPumpIdx(selectedIdx, null);
+  sel.innerHTML = lanes.map(l =>
+    `<option value="${l.cavroIdx}">${l.label}</option>`).join('');
+  if(want != null && lanes.some(l => Number(l.cavroIdx) === want))
+    sel.value = String(want);
+  else if(lanes[0])
+    sel.value = String(lanes[0].cavroIdx);
+}
+
+function _tlDualOtherLanes(ev) {
+  const in1 = _tlPumpIdx(ev.cavroIdx, 0);
+  return _tlCavroLanes().filter(l => Number(l.cavroIdx) !== in1);
+}
+
+function tlDualPushRoleChanged(which) {
+  _tlIgnoreEditorBlurUntil = Date.now() + 800;
+  const ev = tlEvents.find(e => e.id === tlSelectedId);
+  if(!ev) return;
+  const partnerEl = document.getElementById("tlEdCavroPartner");
+  const outletEl = document.getElementById("tlEdCavroOutlet");
+  if(!partnerEl || !outletEl) return;
+  const in1 = _tlPumpIdx(ev.cavroIdx, 0);
+  if(which === 'partner') ev.partnerIdx = _tlPumpIdx(partnerEl.value, 0);
+  if(which === 'outlet') ev.outletIdx = _tlPumpIdx(outletEl.value, 0);
+
+  if(which === 'partner' && ev.outletIdx === ev.partnerIdx) {
+    const next = _tlCavroLanes().find(l =>
+      Number(l.cavroIdx) !== in1 && Number(l.cavroIdx) !== ev.partnerIdx);
+    if(next) ev.outletIdx = Number(next.cavroIdx);
+  }
+  if(which === 'outlet' && ev.partnerIdx === ev.outletIdx) {
+    const next = _tlCavroLanes().find(l =>
+      Number(l.cavroIdx) !== in1 && Number(l.cavroIdx) !== ev.outletIdx);
+    if(next) ev.partnerIdx = Number(next.cavroIdx);
+  }
+  _tlFillDualSelect(partnerEl, ev.partnerIdx, [in1]);
+  _tlFillDualSelect(outletEl, ev.outletIdx, [in1]);
+  tlSaveEvents();
+  tlRender();
+}
+
 function tlOpenEditor(ev) {
   const editor = document.getElementById("tlEditor");
   editor.classList.add("open");
@@ -3633,6 +3706,7 @@ function tlOpenEditor(ev) {
     presetCol.style.display = 'none';
     const cavroLanes = tlLanes.filter(l => l.type === 'cavro');
     const act = ev.cavroAction || 'dispense';
+    if(act === 'dualpush') _tlEnsureDualRoles(ev);
     const pumpLabel = act === 'coordinated' ? 'Input Pump' : act === 'dualpush' ? 'Inlet 1' : 'Pump';
     ts.innerHTML = `<div class="field" style="margin:0">
       <label>${pumpLabel}</label>
@@ -3758,14 +3832,14 @@ function tlOpenEditor(ev) {
     ${act==='dualpush' ? `
       <div class="field" style="margin:0">
         <label>Inlet 2</label>
-        <select id="tlEdCavroPartner" onchange="tlEditorChanged()" style="min-width:80px">
-          ${cavroLanes.filter(l=>l.id!==ev.laneId).map(l => `<option value="${l.cavroIdx}" ${ev.partnerIdx===l.cavroIdx?'selected':''}>${l.label}</option>`).join('')}
+        <select id="tlEdCavroPartner" onchange="tlDualPushRoleChanged('partner')" style="min-width:80px">
+          ${_tlDualOtherLanes(ev).map(l => `<option value="${l.cavroIdx}" ${Number(ev.partnerIdx)===Number(l.cavroIdx)?'selected':''}>${l.label}</option>`).join('')}
         </select>
       </div>
       <div class="field" style="margin:0">
         <label>Outlet</label>
-        <select id="tlEdCavroOutlet" onchange="tlEditorChanged()" style="min-width:80px">
-          ${cavroLanes.filter(l=>l.id!==ev.laneId && l.cavroIdx!==(ev.partnerIdx??-1)).map(l => `<option value="${l.cavroIdx}" ${ev.outletIdx===l.cavroIdx?'selected':''}>${l.label}</option>`).join('')}
+        <select id="tlEdCavroOutlet" onchange="tlDualPushRoleChanged('outlet')" style="min-width:80px">
+          ${_tlDualOtherLanes(ev).map(l => `<option value="${l.cavroIdx}" ${Number(ev.outletIdx)===Number(l.cavroIdx)?'selected':''}>${l.label}</option>`).join('')}
         </select>
       </div>
       <div class="field" style="margin:0">
@@ -4018,9 +4092,9 @@ function tlEditorChanged() {
       ev.velocity = rawVel;
     }
     const partnerEl = document.getElementById("tlEdCavroPartner");
-    if(partnerEl) ev.partnerIdx = parseInt(partnerEl.value) || 0;
+    if(partnerEl) ev.partnerIdx = _tlPumpIdx(partnerEl.value, ev.partnerIdx);
     const outletEl = document.getElementById("tlEdCavroOutlet");
-    if(outletEl) ev.outletIdx = parseInt(outletEl.value) || 0;
+    if(outletEl) ev.outletIdx = _tlPumpIdx(outletEl.value, ev.outletIdx);
     const in2FromEl = document.getElementById("tlEdCavroIn2From");
     if(in2FromEl) ev.in2FromPort = parseInt(in2FromEl.value) || 1;
     const in2ToEl = document.getElementById("tlEdCavroIn2To");
@@ -4041,15 +4115,7 @@ function tlEditorChanged() {
           ev.partnerIdx = other ? other.cavroIdx : 0;
         }
       }
-      if(ev.cavroAction === 'dualpush') {
-        const others = tlLanes.filter(l => l.type==='cavro' && l.cavroIdx !== ev.cavroIdx);
-        if(ev.partnerIdx == null || ev.partnerIdx === ev.cavroIdx)
-          ev.partnerIdx = others[0] ? others[0].cavroIdx : 0;
-        if(ev.outletIdx == null || ev.outletIdx === ev.cavroIdx || ev.outletIdx === ev.partnerIdx) {
-          const out = others.find(l => l.cavroIdx !== ev.partnerIdx);
-          ev.outletIdx = out ? out.cavroIdx : 0;
-        }
-      }
+      if(ev.cavroAction === 'dualpush') _tlEnsureDualRoles(ev);
       tlSaveEvents(); tlOpenEditor(ev); return;
     }
     // Speed limits
@@ -4167,7 +4233,13 @@ function tlDeleteSelected() {
   tlRender();
 }
 
+let _tlIgnoreEditorBlurUntil = 0;
+document.addEventListener("mousedown", e => {
+  if(e.target.closest(".tl-editor select"))
+    _tlIgnoreEditorBlurUntil = Date.now() + 800;
+}, true);
 document.addEventListener("click", e => {
+  if(Date.now() < _tlIgnoreEditorBlurUntil) return;
   if(!e.target.closest(".tl-event") && !e.target.closest(".tl-editor") &&
      !e.target.closest(".tl-toolbar") && e.target.closest(".tl-ruler-wrap")) {
     tlSelectedId = null;
