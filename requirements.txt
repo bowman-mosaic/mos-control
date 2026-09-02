@@ -3,6 +3,7 @@ flask-sock>=0.7.0
 pyserial>=3.5
 numpy>=1.24.0
 Pillow>=10.0.0
+tifffile
 comtypes>=1.4.0
 # PyVCAM – install separately; requires PVCAM SDK from Teledyne
 # PyVCAM>=2.3.0

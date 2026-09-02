@@ -16,6 +16,7 @@ Provides:
 
 from modules._api import expose, push_event
 from modules import pvcam_raw as pvc
+from modules.image_levels import estimate_display_levels, smooth_display_levels
 import threading
 import numpy as np
 import base64
@@ -70,6 +71,9 @@ _experiment_lock = threading.Lock()
 _frame_lock = threading.Lock()
 _latest_jpeg = None          # raw JPEG bytes for WebSocket stream
 _frame_event = threading.Event()
+_raw_frame_condition = threading.Condition()
+_latest_raw_frame = None
+_latest_raw_frame_seq = 0
 
 # Circular buffer for continuous acquisition — kept alive while live view runs
 _circ_buf = None
@@ -84,9 +88,7 @@ _disp_vmax = 65535.0
 _disp_gamma = 1.0         # gamma correction: >1 darkens midtones, <1 brightens
 _disp_brightness = 0      # -100 to 100, applied as offset after stretch
 _disp_contrast = 0        # -100 to 100, applied as gain after stretch
-_DISP_EMA_ALPHA = 0.25    # smoothing factor: lower = more stable, higher = more responsive
-_DISP_LO_PCT = 1.0        # low percentile for auto-stretch
-_DISP_HI_PCT = 99.0       # high percentile for auto-stretch
+_disp_levels_initialized = False
 
 _gamma_lut = None          # cached uint8 LUT for current gamma value
 _gamma_lut_val = None      # gamma value the LUT was built for
@@ -121,17 +123,14 @@ class CamError(Exception):
 _LIVE_PREVIEW_DIM = 800
 
 def _auto_range(frame):
-    """Simple data-range display: map actual [min, max] to [0, 255].
+    """Estimate robust display levels without changing the raw frame."""
+    return estimate_display_levels(frame, max_samples=50_000)
 
-    Like ImageJ on first open — no histogram tricks, just the real range.
-    Uses subsampled data for speed.
-    """
-    flat = frame.ravel()
-    sub = flat[::max(1, flat.size // 50000)]
-    lo, hi = float(sub.min()), float(sub.max())
-    if hi <= lo:
-        hi = lo + 1
-    return lo, hi
+
+def _reset_auto_level_state():
+    """Make continuous auto-level tracking initialize from the next frame."""
+    global _disp_levels_initialized
+    _disp_levels_initialized = False
 
 
 def _get_gamma_lut(gamma):
@@ -153,7 +152,7 @@ def _normalize_u8(frame, max_dim=_LIVE_PREVIEW_DIM):
     In 'locked' mode, uses the frozen _disp_vmin/_disp_vmax values.
     Gamma correction (>1 darkens midtones) is applied via a fast uint8 LUT.
     """
-    global _disp_vmin, _disp_vmax
+    global _disp_vmin, _disp_vmax, _disp_levels_initialized
 
     h, w = frame.shape
     scale = max(1, max(h, w) // max_dim) if max_dim else 1
@@ -161,12 +160,13 @@ def _normalize_u8(frame, max_dim=_LIVE_PREVIEW_DIM):
 
     if _disp_mode == "auto":
         lo, hi = _auto_range(small)
-        alpha = _DISP_EMA_ALPHA
-        if _disp_vmin == 0.0 and _disp_vmax == 65535.0:
+        if not _disp_levels_initialized:
             _disp_vmin, _disp_vmax = lo, hi
+            _disp_levels_initialized = True
         else:
-            _disp_vmin += alpha * (lo - _disp_vmin)
-            _disp_vmax += alpha * (hi - _disp_vmax)
+            _disp_vmin, _disp_vmax = smooth_display_levels(
+                (_disp_vmin, _disp_vmax), (lo, hi)
+            )
 
     vmin, vmax = _disp_vmin, _disp_vmax
     if vmax <= vmin:
@@ -465,6 +465,8 @@ def get_camera_info():
 def set_exposure(ms):
     global _exposure_ms
     _exposure_ms = max(1, int(ms))
+    if _disp_mode == "auto":
+        _reset_auto_level_state()
     _live_exposure_changed.set()
 
 
@@ -478,6 +480,8 @@ def set_binning(b):
     if b not in (1, 2, 4, 8):
         raise CamError(f"Binning must be 1, 2, 4, or 8 (got {b})")
     _binning = (b, b)
+    if _disp_mode == "auto":
+        _reset_auto_level_state()
 
 
 def get_binning():
@@ -544,15 +548,14 @@ def live_is_active():
     return _live_thread is not None and _live_thread.is_alive()
 
 
-_latest_raw_frame = None
-
 def _live_loop():
     """Background thread: continuously poll frames from the camera.
 
     Uses pvcam_raw's continuous acquisition mode with a 2-frame circular buffer.
     Each new frame is JPEG-encoded and stored for the WebSocket streamer.
     """
-    global _latest_jpeg, _live_fps, _circ_buf, _circ_buf_size, _latest_raw_frame
+    global _latest_jpeg, _live_fps, _circ_buf, _circ_buf_size
+    global _latest_raw_frame, _latest_raw_frame_seq
     try:
         with _lock:
             frame_bytes = pvc.setup_cont(_hcam, _exposure_ms, _binning[0])
@@ -596,7 +599,10 @@ def _live_loop():
                         t0 = time.monotonic()
                         frames_count = 0
 
-                    _latest_raw_frame = frame.copy()
+                    with _raw_frame_condition:
+                        _latest_raw_frame = frame.copy()
+                        _latest_raw_frame_seq += 1
+                        _raw_frame_condition.notify_all()
                     jpeg = _frame_to_jpeg_bytes(
                         frame, quality=75, max_dim=_LIVE_PREVIEW_DIM,
                     )
@@ -629,6 +635,18 @@ def get_live_jpeg():
 
 def get_live_fps():
     return round(_live_fps, 1)
+
+
+def _wait_for_live_frame(after_seq, timeout_s=2.0):
+    """Return a raw frame newer than ``after_seq`` from live acquisition."""
+    deadline = time.monotonic() + float(timeout_s)
+    with _raw_frame_condition:
+        while _latest_raw_frame is None or _latest_raw_frame_seq <= after_seq:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise CamError("Timed out waiting for a fresh live frame")
+            _raw_frame_condition.wait(timeout=remaining)
+        return _latest_raw_frame.copy(), _latest_raw_frame_seq
 
 
 # ── Video recording ──────────────────────────────────────────────────────────
@@ -794,9 +812,10 @@ def stack_finish():
 def autofocus(z_range_nm=20000, steps=11, exposure_ms=None, metric="lapvar"):
     """Image-based autofocus: scan Z, score each frame, move to best.
 
-    Snaps a frame at each of `steps` evenly-spaced Z positions across
-    ``current_z ± z_range_nm/2``, scores with the requested metric, and
-    moves the stage to the best-scoring Z.  Returns ``(best_z_nm, best_score, scores, z_positions)``.
+    Scores a fresh live frame, or snaps when live view is inactive, at each of
+    `steps` evenly-spaced Z positions across ``current_z ± z_range_nm/2``.
+    Moves the stage to the best-scoring Z and returns
+    ``(best_z_nm, best_score, scores, z_positions)``.
     """
     import modules.nikon_ti as ti
 
@@ -811,8 +830,6 @@ def autofocus(z_range_nm=20000, steps=11, exposure_ms=None, metric="lapvar"):
         _capture_thread.join(timeout=10)
 
     was_live = live_is_active()
-    if was_live:
-        live_stop()
 
     # Save & restore exposure
     orig_exposure = _exposure_ms
@@ -835,7 +852,14 @@ def autofocus(z_range_nm=20000, steps=11, exposure_ms=None, metric="lapvar"):
         for i, z in enumerate(z_positions):
             ti.z_move_absolute(z)
             time.sleep(0.15)  # settle
-            frame = snap()
+            if was_live:
+                # Wait for a frame acquired after the stage has settled. This
+                # keeps the live acquisition and browser WebSocket connected.
+                with _raw_frame_condition:
+                    previous_seq = _latest_raw_frame_seq
+                frame, _ = _wait_for_live_frame(previous_seq)
+            else:
+                frame = snap()
             score = _af_score(frame, metric)
             scores.append(score)
             if score > best_score:
@@ -855,8 +879,6 @@ def autofocus(z_range_nm=20000, steps=11, exposure_ms=None, metric="lapvar"):
                 set_exposure(int(orig_exposure))
             except Exception:
                 pass
-        if was_live:
-            live_start()
 
 
 def _af_score(frame, metric="lapvar"):
@@ -1393,7 +1415,7 @@ def _apply_bcg(frame, brightness=0, contrast=100, gamma=1.0, max_dim=1200,
 
 @expose
 def cam_npy_auto_adjust(filename, frame_idx=0, subdir=None):
-    """Analyze a frame and return suggested brightness/contrast/gamma values."""
+    """Analyze a frame and return an explicit robust display window."""
     base = os.path.normpath(_base_save_dir) if subdir else os.path.normpath(_save_dir)
     if subdir:
         base = os.path.join(base, subdir)
@@ -1417,53 +1439,15 @@ def cam_npy_auto_adjust(filename, frame_idx=0, subdir=None):
     h, w = frame.shape
     step = max(1, max(h, w) // 800)
     small = frame[::step, ::step]
-
-    flat = small.ravel()
-    data_min, data_max = float(flat.min()), float(flat.max())
-    full_rng = data_max - data_min
-    if full_rng <= 0:
-        return {"ok": True, "brightness": 0, "contrast": 100, "gamma": 100}
-
-    hist, _ = np.histogram(flat, bins=256, range=(data_min, data_max))
-    n_px = int(hist.sum())
-    limit = n_px // 10
-    threshold = max(1, n_px // 5000)
-    bin_w = full_rng / 256.0
-
-    hmin = 0
-    for i in range(256):
-        c = int(hist[i])
-        if c > limit:
-            c = 0
-        if c > threshold:
-            hmin = i
-            break
-
-    hmax = 255
-    for i in range(255, -1, -1):
-        c = int(hist[i])
-        if c > limit:
-            c = 0
-        if c > threshold:
-            hmax = i
-            break
-
-    if hmin >= hmax:
-        return {"ok": True, "brightness": 0, "contrast": 100, "gamma": 100}
-
-    auto_lo = data_min + hmin * bin_w
-    auto_hi = data_min + (hmax + 1) * bin_w
-    auto_rng = auto_hi - auto_lo
-    auto_center = (auto_lo + auto_hi) / 2.0
-    data_center = (data_min + data_max) / 2.0
-
-    contrast = int(round(100 * full_rng / auto_rng)) if auto_rng > 0 else 100
-    contrast = max(50, min(300, contrast))
-
-    brightness = int(round((data_center - auto_center) / full_rng * 100))
-    brightness = max(-100, min(100, brightness))
-
-    return {"ok": True, "brightness": brightness, "contrast": contrast, "gamma": 100}
+    auto_lo, auto_hi = _auto_range(small)
+    return {
+        "ok": True,
+        "display_min": auto_lo,
+        "display_max": auto_hi,
+        "brightness": 0,
+        "contrast": 100,
+        "gamma": 100,
+    }
 
 
 @expose
@@ -1500,7 +1484,8 @@ def cam_npy_histogram(filename, frame_idx=0, bins=256, subdir=None):
 
 
 @expose
-def cam_npy_stack(filename, mode="max", brightness=0, contrast=100, gamma=1.0, subdir=None):
+def cam_npy_stack(filename, mode="max", brightness=0, contrast=100, gamma=1.0,
+                  subdir=None, display_min=None, display_max=None):
     """Return a composite of all frames in an image file as a base64 JPEG.
 
     mode: 'max' (max-intensity projection), 'mean' (average), 'sum' (sum clipped),
@@ -1574,7 +1559,10 @@ def cam_npy_stack(filename, mode="max", brightness=0, contrast=100, gamma=1.0, s
     _pseudo_color = _PSEUDO_COLOR_MAP.get(meta_color)
     _pseudo_color_name = meta_color
     try:
-        u8, _, _ = _apply_bcg(composite, brightness, contrast, gamma, max_dim=1200)
+        u8, _, _ = _apply_bcg(
+            composite, brightness, contrast, gamma, max_dim=1200,
+            display_min=display_min, display_max=display_max,
+        )
         if _HAS_CV2:
             if u8.ndim == 3:
                 u8 = cv2.cvtColor(u8, cv2.COLOR_RGB2BGR)
@@ -1609,7 +1597,7 @@ def cam_npy_merge(filename, weights=None, gamma=1.0, subdir=None, ranges=None):
              If None, all channels at 1.0.
     gamma: global gamma correction.
     ranges: list of [lo, hi] per channel to lock normalization. If None,
-            auto-ranges each channel (0.5–99.5 percentile).
+            robustly auto-ranges each channel.
     """
     base = os.path.normpath(_base_save_dir) if subdir else os.path.normpath(_save_dir)
     if subdir:
@@ -1642,8 +1630,7 @@ def cam_npy_merge(filename, weights=None, gamma=1.0, subdir=None, ranges=None):
         if ranges and i < len(ranges) and ranges[i] is not None:
             lo, hi = float(ranges[i][0]), float(ranges[i][1])
         else:
-            lo = float(np.percentile(frame, 0.5))
-            hi = float(np.percentile(frame, 99.5))
+            lo, hi = _auto_range(frame)
         if hi <= lo:
             hi = lo + 1
         computed_ranges.append([lo, hi])
@@ -1661,7 +1648,7 @@ def cam_npy_merge(filename, weights=None, gamma=1.0, subdir=None, ranges=None):
                 canvas[:, :, ch] += norm * weights[i]
 
     if gamma != 1.0:
-        canvas = np.power(np.clip(canvas, 0, 1), 1.0 / gamma)
+        canvas = np.power(np.clip(canvas, 0, 1), gamma)
     else:
         canvas = np.clip(canvas, 0, 1)
 
@@ -1799,6 +1786,7 @@ def cam_display_mode(mode=None):
         if mode == "auto":
             global _disp_vmin, _disp_vmax
             _disp_vmin, _disp_vmax = 0.0, 65535.0
+            _reset_auto_level_state()
     return {"mode": _disp_mode, "vmin": round(_disp_vmin), "vmax": round(_disp_vmax),
             "gamma": _disp_gamma}
 
@@ -1806,7 +1794,7 @@ def cam_display_mode(mode=None):
 @expose
 def cam_auto_adjust():
     """One-shot: compute display range from current frame and lock it."""
-    global _disp_mode, _disp_vmin, _disp_vmax
+    global _disp_mode, _disp_vmin, _disp_vmax, _disp_levels_initialized
     frame = _latest_raw_frame
     if frame is None:
         if _hcam is None:
@@ -1819,6 +1807,7 @@ def cam_auto_adjust():
     if hi <= lo:
         hi = lo + 1
     _disp_vmin, _disp_vmax = lo, hi
+    _disp_levels_initialized = True
     _disp_mode = "locked"
     return {"mode": "locked", "vmin": round(lo), "vmax": round(hi), "gamma": _disp_gamma}
 
@@ -1849,9 +1838,10 @@ def cam_get_histogram(bins=256):
 @expose
 def cam_set_display_range(vmin, vmax):
     """Manually set display min/max and lock."""
-    global _disp_mode, _disp_vmin, _disp_vmax
+    global _disp_mode, _disp_vmin, _disp_vmax, _disp_levels_initialized
     _disp_vmin = float(vmin)
     _disp_vmax = float(vmax)
+    _disp_levels_initialized = True
     _disp_mode = "locked"
     return {"mode": "locked", "vmin": round(_disp_vmin), "vmax": round(_disp_vmax),
             "gamma": _disp_gamma}
@@ -1903,6 +1893,7 @@ def cam_reset_display():
     _disp_mode = "auto"
     _disp_vmin = 0.0
     _disp_vmax = 65535.0
+    _reset_auto_level_state()
     return {"brightness": 0, "contrast": 0, "gamma": 1.0}
 
 
@@ -1968,8 +1959,7 @@ def _render_merge_rgb(arr, meta_colors, weights, gamma, ranges=None):
         if ranges and i < len(ranges) and ranges[i] is not None:
             lo, hi = float(ranges[i][0]), float(ranges[i][1])
         else:
-            lo = float(np.percentile(frame, 0.5))
-            hi = float(np.percentile(frame, 99.5))
+            lo, hi = _auto_range(frame)
         if hi <= lo:
             hi = lo + 1
         computed.append([lo, hi])
@@ -1986,7 +1976,7 @@ def _render_merge_rgb(arr, meta_colors, weights, gamma, ranges=None):
             for ch in range(3):
                 canvas[:, :, ch] += norm * weights[i]
     if gamma != 1.0:
-        canvas = np.power(np.clip(canvas, 0, 1), 1.0 / gamma)
+        canvas = np.power(np.clip(canvas, 0, 1), gamma)
     else:
         canvas = np.clip(canvas, 0, 1)
     return (canvas * 255).astype(np.uint8), computed
@@ -1994,7 +1984,8 @@ def _render_merge_rgb(arr, meta_colors, weights, gamma, ranges=None):
 
 @expose
 def cam_export_image(filename, frame_idx=0, brightness=0, contrast=100,
-                     gamma=1.0, subdir=None):
+                     gamma=1.0, subdir=None, display_min=None,
+                     display_max=None):
     """Export the currently viewed frame as a full-resolution PNG."""
     base = os.path.normpath(_base_save_dir) if subdir else os.path.normpath(_save_dir)
     if subdir:
@@ -2022,7 +2013,10 @@ def cam_export_image(filename, frame_idx=0, brightness=0, contrast=100,
     else:
         color = meta_color
 
-    rgb, _, _ = _render_frame_rgb(frame, color, brightness, contrast, gamma)
+    rgb, _, _ = _render_frame_rgb(
+        frame, color, brightness, contrast, gamma,
+        display_min=display_min, display_max=display_max,
+    )
 
     _ensure_exports_dir()
     stem = os.path.splitext(filename)[0]
@@ -2082,7 +2076,7 @@ def cam_export_merge_image(filename, weights=None, gamma=1.0, subdir=None):
 
 @expose
 def cam_export_mp4(filename, fps=10, brightness=0, contrast=100, gamma=1.0,
-                   subdir=None):
+                   subdir=None, display_min=None, display_max=None):
     """Export a video or timelapse .tif as an MP4 with display adjustments."""
     if not _HAS_CV2:
         return {"error": "OpenCV required for video export"}
@@ -2103,8 +2097,10 @@ def cam_export_mp4(filename, fps=10, brightness=0, contrast=100, gamma=1.0,
     n_frames, h, w = arr.shape
     fps = int(fps)
 
-    first_rgb, lo, hi = _render_frame_rgb(arr[0], meta_color, brightness,
-                                          contrast, gamma)
+    first_rgb, lo, hi = _render_frame_rgb(
+        arr[0], meta_color, brightness, contrast, gamma,
+        display_min=display_min, display_max=display_max,
+    )
     frame_h, frame_w = first_rgb.shape[:2]
 
     _ensure_exports_dir()
@@ -2129,7 +2125,8 @@ def cam_export_mp4(filename, fps=10, brightness=0, contrast=100, gamma=1.0,
 
 @expose
 def cam_export_stack_tl_mp4(filenames, channel=0, fps=2, brightness=0,
-                            contrast=100, gamma=1.0, subdir=None):
+                            contrast=100, gamma=1.0, subdir=None,
+                            display_min=None, display_max=None):
     """Export a stack timelapse (single channel across files) as MP4."""
     if not _HAS_CV2:
         return {"error": "OpenCV required for video export"}
@@ -2152,8 +2149,10 @@ def cam_export_stack_tl_mp4(filenames, channel=0, fps=2, brightness=0,
     color = (meta_colors[channel] if meta_colors and channel < len(meta_colors)
              else "none")
     frame = first_arr[min(channel, first_arr.shape[0] - 1)]
-    first_rgb, lo, hi = _render_frame_rgb(frame, color, brightness,
-                                          contrast, gamma)
+    first_rgb, lo, hi = _render_frame_rgb(
+        frame, color, brightness, contrast, gamma,
+        display_min=display_min, display_max=display_max,
+    )
     frame_h, frame_w = first_rgb.shape[:2]
 
     _ensure_exports_dir()

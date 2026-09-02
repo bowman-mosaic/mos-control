@@ -2314,7 +2314,7 @@ async function npyHistUpdate() {
   const r = await api('cam_npy_histogram', _npyCurrentFile, frameIdx, 256, _npySubdir);
   if (r.error) return;
   const canvas = document.getElementById('npyHistCanvas');
-  _histDraw(canvas, r, null, null);
+  _histDraw(canvas, r, _npyDisplayMin, _npyDisplayMax);
   document.getElementById('npyHistInfo').textContent =
     r.min + ' – ' + r.max + '  (' + (r.max - r.min) + ')';
 }
@@ -4693,6 +4693,8 @@ function tlClearAll() {
    ═══════════════════════════════════════════════════════════════════════════ */
 let _npyCurrentFile = null;
 let _npyDebounce = null;
+let _npyDisplayMin = null;
+let _npyDisplayMax = null;
 
 function npyOpen(filename) {
   switchPanel('viewer');
@@ -4859,6 +4861,8 @@ function _npyBcgValues() {
   };
 }
 function npyBcgReset(skipReload) {
+  _npyDisplayMin = null;
+  _npyDisplayMax = null;
   document.getElementById("npyBrightness").value = 0;
   document.getElementById("npyContrast").value = 100;
   document.getElementById("npyGamma").value = 100;
@@ -4882,12 +4886,14 @@ async function npyAutoAdjust() {
     : parseInt(document.getElementById("npyFrameSlider").value) || 0;
   const r = await api('cam_npy_auto_adjust', _npyCurrentFile, idx, _npySubdir);
   if(r.error) { toast(r.error, "error"); return; }
-  document.getElementById("npyBrightness").value = r.brightness;
-  document.getElementById("npyContrast").value = r.contrast;
-  document.getElementById("npyGamma").value = r.gamma;
-  document.getElementById("npyBrightnessVal").textContent = r.brightness;
-  document.getElementById("npyContrastVal").textContent = r.contrast;
-  document.getElementById("npyGammaVal").textContent = (r.gamma / 100).toFixed(2);
+  _npyDisplayMin = r.display_min;
+  _npyDisplayMax = r.display_max;
+  document.getElementById("npyBrightness").value = 0;
+  document.getElementById("npyContrast").value = 100;
+  document.getElementById("npyGamma").value = 100;
+  document.getElementById("npyBrightnessVal").textContent = "0";
+  document.getElementById("npyContrastVal").textContent = "100";
+  document.getElementById("npyGammaVal").textContent = "1.00";
   npyReloadCurrent();
 }
 function npyReloadCurrent() {
@@ -4906,8 +4912,8 @@ function npyReloadCurrent() {
 /* ── Frame loading (video / timelapse / single channel view) ── */
 async function npyLoadFrame(filename, frameIdx, dispMin, dispMax) {
   const bcg = _npyBcgValues();
-  const dMin = dispMin !== undefined ? dispMin : null;
-  const dMax = dispMax !== undefined ? dispMax : null;
+  const dMin = dispMin !== undefined ? dispMin : _npyDisplayMin;
+  const dMax = dispMax !== undefined ? dispMax : _npyDisplayMax;
   const r = await api('cam_npy_preview', filename, frameIdx,
                        bcg.brightness, bcg.contrast, bcg.gamma, _npySubdir,
                        dMin, dMax);
@@ -5131,7 +5137,8 @@ let _npyShowingStack = false;
 async function _npyRenderStack() {
   const bcg = _npyBcgValues();
   const r = await api('cam_npy_stack', _npyCurrentFile, 'max',
-                       bcg.brightness, bcg.contrast, bcg.gamma, _npySubdir);
+                       bcg.brightness, bcg.contrast, bcg.gamma, _npySubdir,
+                       _npyDisplayMin, _npyDisplayMax);
   if(r.error) { toast(r.error, "error"); return; }
   const img = document.getElementById("npyImage");
   img.src = "data:image/jpeg;base64," + r.image;
@@ -5266,7 +5273,8 @@ async function npyExportImage() {
       frameIdx = parseInt(document.getElementById("npyFrameSlider").value) || 0;
     }
     r = await api('cam_export_image', _npyCurrentFile, frameIdx,
-                   bcg.brightness, bcg.contrast, bcg.gamma, _npySubdir);
+                   bcg.brightness, bcg.contrast, bcg.gamma, _npySubdir,
+                   _npyDisplayMin, _npyDisplayMax);
   }
 
   if(r.error) { status.textContent = r.error; return; }
@@ -5284,7 +5292,8 @@ async function npyExportVideo() {
     const fps = parseInt(document.getElementById("npyPlaySpeed").value) || 10;
     status.textContent = 'Rendering MP4... (this may take a moment)';
     const r = await api('cam_export_mp4', _npyCurrentFile, fps,
-                         bcg.brightness, bcg.contrast, bcg.gamma, _npySubdir);
+                         bcg.brightness, bcg.contrast, bcg.gamma, _npySubdir,
+                         _npyDisplayMin, _npyDisplayMax);
     if(r.error) { status.textContent = r.error; return; }
     status.textContent = `Exported ${r.frames} frames: ${r.filename}`;
     _npyTriggerDownload(r.filename);
@@ -5303,7 +5312,8 @@ async function npyExportVideo() {
       const ch = parseInt(document.getElementById("npyChannelSelect").value) || 0;
       const bcg = _npyBcgValues();
       r = await api('cam_export_stack_tl_mp4', _npyStackFiles, ch, fps,
-                     bcg.brightness, bcg.contrast, bcg.gamma, _npySubdir);
+                     bcg.brightness, bcg.contrast, bcg.gamma, _npySubdir,
+                     _npyDisplayMin, _npyDisplayMax);
     }
     if(r.error) { status.textContent = r.error; return; }
     status.textContent = `Exported ${r.frames} frames: ${r.filename}`;
