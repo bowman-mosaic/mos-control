@@ -4333,7 +4333,7 @@ async function tlRunCycle(sorted, progress) {
   // Track every fire-and-forget event Promise so we can await them before
   // moving on. Without this, a late per-event stop from cycle N can race
   // cycle N+1's start, halting the new pump mid-pre-fill and triggering
-  // the thread's "final flush" (push to 0 via inlet port).
+  // the thread's role-specific final flush.
   const eventPromises = [];
 
   // Precompute the "halt boundary" for each event: the wall-clock time
@@ -4525,9 +4525,9 @@ async function tlStopAllHardware(sorted) {
   // Each per-event stop (cavro_continuous_stop / cavro_coordinated_stop /
   // cavro_dualpush_stop) signals its background thread to exit, which then
   // runs the thread's natural "final flush" — pushing the syringe back to 0
-  // via the inlet port at max velocity. This is the same logic used between
-  // pump events. Idle pumps are deliberately left untouched (no halt, no
-  // global flush) so the end-of-cycle cleanup never looks like a home.
+  // at max velocity. Inlets flush to their from ports; coordinated/dual
+  // outlets flush to their to ports. Idle pumps are deliberately left
+  // untouched (no halt, no global flush).
   const stops = [];
   for(const ev of sorted) {
     if(ev.type === 'cavro') {
