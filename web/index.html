@@ -4151,7 +4151,7 @@ function tlEditorChanged() {
       const defVelMlS = 1400 / countsPerMl;
       const vel = velMlS || defVelMlS;
       const vol = ev.volume || 0;
-      const maxPullMlS = 5800 / countsPerMl;
+      const maxPullMlS = 2000 / countsPerMl;
       const fullStrokes = Math.floor(vol / syr);
       const remaining = vol % syr;
       const totalStrokes = fullStrokes + (remaining > 0.0001 ? 1 : 0);

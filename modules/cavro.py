@@ -22,6 +22,10 @@ from syringe_pump_control import list_serial_ports         # noqa: E402
 
 NUM_CAVRO = 4
 
+# Aspiration / refill plunger speed (counts/s). Pump max (~2900) cavitates
+# on the pull; 2000 was clean in bench tests. Dispense/flush still use max.
+REFILL_VELOCITY_COUNTS = 2000
+
 _serial = None
 _serial_lock = threading.Lock()   # protects connect/disconnect
 _bus_lock = threading.RLock()      # serializes all serial I/O (reentrant for retries)
@@ -84,6 +88,15 @@ def _patch_pump_for_concurrency(pump):
                 continue
             time.sleep(poll_interval)
     pump.wait_for_ready = _wait
+
+
+def _max_vel(pump):
+    return min(pump.counts_per_stroke, int(5800 / pump.velocity_scale))
+
+
+def _refill_vel(pump):
+    """Plunger speed for filling the syringe from a reservoir."""
+    return max(3, min(REFILL_VELOCITY_COUNTS, _max_vel(pump)))
 
 
 def _check(idx):
@@ -413,7 +426,7 @@ def cavro_dispense(idx, volume_ml, from_port, to_port, velocity_ml=None):
         pump = _pumps[idx]
         max_v = int(5800 / pump.velocity_scale)
         kwargs = {
-            "velocity_counts": min(pump.counts_per_stroke, int(5800 / pump.velocity_scale)),
+            "velocity_counts": _refill_vel(pump),
             "dispense_velocity_counts": pump._velocity_counts,
         }
         if velocity_ml is not None:
@@ -687,7 +700,8 @@ def cavro_continuous_is_running(idx):
 def _continuous_thread(idx, from_port, to_port, velocity_ml, cycles, ready=None):
     pump = _pumps[idx]
     syringe_ml = pump.syringe_volume_ml
-    max_vel = min(pump.counts_per_stroke, int(5800 / pump.velocity_scale))
+    max_vel = _max_vel(pump)
+    refill_vel = _refill_vel(pump)
     # Convert mL/s to counts/s, clamped to pump max
     max_v = int(5800 / pump.velocity_scale)
     if velocity_ml:
@@ -697,19 +711,19 @@ def _continuous_thread(idx, from_port, to_port, velocity_ml, cycles, ready=None)
     n = 0
     print(f"[Cavro C{idx+1}] continuous: from={from_port} to={to_port} "
           f"vel_ml={velocity_ml} dispense_vel_counts={dispense_vel} "
-          f"max_vel={max_vel} syringe={syringe_ml}mL")
+          f"refill_vel={refill_vel} max_vel={max_vel} syringe={syringe_ml}mL")
     try:
         push_event("onCavroContinuousUpdate", idx, "started",
                    f"Continuous: {from_port}→{to_port}" +
                    (f", {cycles} cycles" if cycles else ", until stopped"))
 
-        # Pre-fill: batch valve switch + fast pull into one command
+        # Pre-fill: batch valve switch + refill into one command
         push_event("onCavroContinuousUpdate", idx, "running",
                    "Pre-filling syringe...")
         full_counts = int(syringe_ml * pump.counts_per_ml)
         pump.start_batch()
         pump.switch_valve(from_port)
-        pump.move_absolute_counts(full_counts, velocity_counts=max_vel, wait=False)
+        pump.move_absolute_counts(full_counts, velocity_counts=refill_vel, wait=False)
         pump.execute(wait=True)
         print(f"[Cavro C{idx+1}] pre-fill done, plunger at {pump.volume_ml:.3f} mL")
         if ready:
@@ -735,12 +749,12 @@ def _continuous_thread(idx, from_port, to_port, velocity_ml, cycles, ready=None)
                 break
             print(f"[Cavro C{idx+1}] cycle {n}: push done, plunger at {pump.volume_ml:.3f} mL")
 
-            # Pull: batch valve switch + fast refill into one command
+            # Pull: batch valve switch + refill into one command
             print(f"[Cavro C{idx+1}] cycle {n}: switching to port {from_port}, pulling")
             pump.start_batch()
             pump.switch_valve(from_port)
             try:
-                pump.move_absolute_counts(full_counts, velocity_counts=max_vel, wait=False)
+                pump.move_absolute_counts(full_counts, velocity_counts=refill_vel, wait=False)
                 pump.execute(wait=True)
             except Exception:
                 pass
@@ -848,6 +862,7 @@ def _coordinated_thread(idx1, idx2, from1, to1, from2, to2, velocity_ml, ready=N
     syringe_ml = pump1.syringe_volume_ml
     max_v = int(5800 / pump1.velocity_scale)
     max_vel = min(pump1.counts_per_stroke, max_v)
+    refill_vel = _refill_vel(pump1)
 
     if velocity_ml:
         push_vel = max(3, min(round(velocity_ml * pump1.counts_per_ml), max_v))
@@ -856,8 +871,8 @@ def _coordinated_thread(idx1, idx2, from1, to1, from2, to2, velocity_ml, ready=N
 
     n = 0
     print(f"[Cavro COORD] P{idx1+1}({from1}→{to1}) + P{idx2+1}({from2}→{to2}) "
-          f"vel_ml={velocity_ml} push_vel={push_vel} max_vel={max_vel} "
-          f"syringe={syringe_ml}mL")
+          f"vel_ml={velocity_ml} push_vel={push_vel} refill_vel={refill_vel} "
+          f"max_vel={max_vel} syringe={syringe_ml}mL")
     try:
         push_event("onCavroCoordinatedUpdate", "started",
                    f"Coordinated: P{idx1+1}({from1}→{to1}) + "
@@ -869,7 +884,7 @@ def _coordinated_thread(idx1, idx2, from1, to1, from2, to2, velocity_ml, ready=N
         pump1.switch_valve(from1)
         pump1.move_absolute_counts(
             int(syringe_ml * pump1.counts_per_ml),
-            velocity_counts=max_vel, wait=False)
+            velocity_counts=refill_vel, wait=False)
         pump1.execute(wait=True)
         print(f"[Cavro COORD] pre-fill done")
         if ready:
@@ -897,15 +912,16 @@ def _coordinated_thread(idx1, idx2, from1, to1, from2, to2, velocity_ml, ready=N
                 break
             print(f"[Cavro COORD] cycle {n} phase A done")
 
-            # Phase B: Pump 1 refills from source (fast),
+            # Phase B: Pump 1 refills from source,
             #          Pump 2 dispenses to destination (fast)
             print(f"[Cavro COORD] cycle {n} phase B: "
-                  f"P{idx1+1} refill from {from1}, P{idx2+1} dispense to {to2}")
+                  f"P{idx1+1} refill from {from1} @ {refill_vel}, "
+                  f"P{idx2+1} dispense to {to2}")
             pump1.start_batch()
             pump1.switch_valve(from1)
             pump1.move_absolute_counts(
                 int(syringe_ml * pump1.counts_per_ml),
-                velocity_counts=max_vel, wait=False)
+                velocity_counts=refill_vel, wait=False)
             pump2.start_batch()
             pump2.switch_valve(to2)
             pump2.move_absolute_counts(0, velocity_counts=max_vel, wait=False)
@@ -1024,6 +1040,7 @@ def _dualpush_thread(idx1, idx2, idx3, from1, to1, from2, to2,
     syringe_ml = p1.syringe_volume_ml
     max_v = int(5800 / p1.velocity_scale)
     max_vel = min(p1.counts_per_stroke, max_v)
+    refill_vel = _refill_vel(p1)
     full = int(syringe_ml * p1.counts_per_ml)
     half = full // 2
 
@@ -1041,7 +1058,7 @@ def _dualpush_thread(idx1, idx2, idx3, from1, to1, from2, to2,
     print(f"[Cavro DUAL] P{idx1+1}({from1}→{to1}) + P{idx2+1}({from2}→{to2}) "
           f"+ out P{idx3+1}({from3}→{to3}) vel_ml={velocity_ml} "
           f"inlet_vel={inlet_vel} outlet_vel={outlet_vel} (2× inlet) "
-          f"max_vel={max_vel} syringe={syringe_ml}mL")
+          f"refill_vel={refill_vel} max_vel={max_vel} syringe={syringe_ml}mL")
     try:
         push_event("onCavroDualPushUpdate", "started",
                    f"Dual push: P{idx1+1}+P{idx2+1} @ {inlet_vel} cts/s, "
@@ -1051,8 +1068,8 @@ def _dualpush_thread(idx1, idx2, idx3, from1, to1, from2, to2,
         _recover_after_halt(p1, p2, p3)
         _broadcast_valves((p1, from1), (p2, from2))
         _broadcast_moves(
-            (p1, full, max_vel),
-            (p2, full, max_vel),
+            (p1, full, refill_vel),
+            (p2, full, refill_vel),
         )
         print(f"[Cavro DUAL] pre-fill done")
         if ready:
@@ -1080,16 +1097,17 @@ def _dualpush_thread(idx1, idx2, idx3, from1, to1, from2, to2,
                 break
             print(f"[Cavro DUAL] cycle {n} phase A done")
 
-            # Phase B: inlets refill (fast, in sync), outlet to waste
+            # Phase B: inlets refill in sync, outlet to waste
             print(f"[Cavro DUAL] cycle {n} phase B: "
-                  f"sync valves, inlets refill, P{idx3+1} waste to {to3}")
+                  f"sync valves, inlets refill @ {refill_vel}, "
+                  f"P{idx3+1} waste to {to3}")
             _broadcast_valves((p1, from1), (p2, from2), (p3, to3))
             if _dual_stop.is_set():
                 print(f"[Cavro DUAL] halted mid phase B (valves)")
                 break
             _broadcast_moves(
-                (p1, full, max_vel),
-                (p2, full, max_vel),
+                (p1, full, refill_vel),
+                (p2, full, refill_vel),
                 (p3, 0, max_vel),
             )
             if _dual_stop.is_set():
