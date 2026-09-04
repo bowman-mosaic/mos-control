@@ -913,10 +913,10 @@ def _coordinated_thread(idx1, idx2, from1, to1, from2, to2, velocity_ml, ready=N
             print(f"[Cavro COORD] cycle {n} phase A done")
 
             # Phase B: Pump 1 refills from source,
-            #          Pump 2 dispenses to destination (fast)
+            #          Pump 2 dispenses to destination (same refill speed)
             print(f"[Cavro COORD] cycle {n} phase B: "
                   f"P{idx1+1} refill from {from1} @ {refill_vel}, "
-                  f"P{idx2+1} dispense to {to2}")
+                  f"P{idx2+1} dispense to {to2} @ {refill_vel}")
             pump1.start_batch()
             pump1.switch_valve(from1)
             pump1.move_absolute_counts(
@@ -924,7 +924,7 @@ def _coordinated_thread(idx1, idx2, from1, to1, from2, to2, velocity_ml, ready=N
                 velocity_counts=refill_vel, wait=False)
             pump2.start_batch()
             pump2.switch_valve(to2)
-            pump2.move_absolute_counts(0, velocity_counts=max_vel, wait=False)
+            pump2.move_absolute_counts(0, velocity_counts=refill_vel, wait=False)
             TecanCavro.broadcast_execute(pump1, pump2)
             TecanCavro.wait_for_all(pump1, pump2)
             if _coord_stop.is_set():
@@ -1100,7 +1100,7 @@ def _dualpush_thread(idx1, idx2, idx3, from1, to1, from2, to2,
             # Phase B: inlets refill in sync, outlet to waste
             print(f"[Cavro DUAL] cycle {n} phase B: "
                   f"sync valves, inlets refill @ {refill_vel}, "
-                  f"P{idx3+1} waste to {to3}")
+                  f"P{idx3+1} waste to {to3} @ {refill_vel}")
             _broadcast_valves((p1, from1), (p2, from2), (p3, to3))
             if _dual_stop.is_set():
                 print(f"[Cavro DUAL] halted mid phase B (valves)")
@@ -1108,7 +1108,7 @@ def _dualpush_thread(idx1, idx2, idx3, from1, to1, from2, to2,
             _broadcast_moves(
                 (p1, full, refill_vel),
                 (p2, full, refill_vel),
-                (p3, 0, max_vel),
+                (p3, 0, refill_vel),
             )
             if _dual_stop.is_set():
                 print(f"[Cavro DUAL] halted mid phase B")
