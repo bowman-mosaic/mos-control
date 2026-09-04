@@ -2306,13 +2306,19 @@ async function liveHistRangeTyped() {
 })();
 
 /* ── Viewer histogram ── */
-async function npyHistUpdate() {
-  if (!_npyCurrentFile) return;
-  const frameIdx = _npyFileTypeCache === 'stack'
-    ? parseInt(document.getElementById('npyChannelSelect').value) || 0
-    : parseInt(document.getElementById('npyFrameSlider').value) || 0;
-  const r = await api('cam_npy_histogram', _npyCurrentFile, frameIdx, 256, _npySubdir);
-  if (r.error) return;
+async function npyHistUpdate(filename, requestedFrameIdx, requestedSubdir) {
+  const file = filename || _npyCurrentFile;
+  if (!file) return;
+  const subdir = requestedSubdir !== undefined ? requestedSubdir : _npySubdir;
+  const frameIdx = requestedFrameIdx !== undefined
+    ? requestedFrameIdx
+    : (_npyFileTypeCache === 'stack'
+      ? parseInt(document.getElementById('npyChannelSelect').value) || 0
+      : parseInt(document.getElementById('npyFrameSlider').value) || 0);
+  const generation = ++_npyHistogramGeneration;
+  const r = await api('cam_npy_histogram', file, frameIdx, 256, subdir);
+  if (generation !== _npyHistogramGeneration ||
+      file !== _npyCurrentFile || subdir !== _npySubdir || r.error) return;
   const canvas = document.getElementById('npyHistCanvas');
   _histDraw(canvas, r, _npyDisplayMin, _npyDisplayMax);
   document.getElementById('npyHistInfo').textContent =
@@ -4695,6 +4701,62 @@ let _npyCurrentFile = null;
 let _npyDebounce = null;
 let _npyDisplayMin = null;
 let _npyDisplayMax = null;
+let _npyFrameRequestGeneration = 0;
+let _npyPlaybackGeneration = 0;
+let _npyStackPlaybackGeneration = 0;
+let _npyFileSelectionGeneration = 0;
+let _npyMergeRequestGeneration = 0;
+let _npyHistogramGeneration = 0;
+let _npyLastPlaybackHistogramAt = -Infinity;
+let _npyHistogramTimer = null;
+let _npyPendingHistogram = null;
+
+function _npyInvalidateFrameRequests() {
+  ++_npyFrameRequestGeneration;
+  ++_npyHistogramGeneration;
+  clearTimeout(_npyHistogramTimer);
+  _npyHistogramTimer = null;
+  _npyPendingHistogram = null;
+}
+
+function _npyIssuePendingHistogram() {
+  _npyHistogramTimer = null;
+  const pending = _npyPendingHistogram;
+  _npyPendingHistogram = null;
+  if(!pending ||
+     pending.filename !== _npyCurrentFile ||
+     pending.subdir !== _npySubdir) return;
+  _npyLastPlaybackHistogramAt = performance.now();
+  npyHistUpdate(pending.filename, pending.frameIdx, pending.subdir);
+}
+
+function _npyDisplayedFrameCommitted(filename, frameIdx, subdir, isPlayback) {
+  // Every displayed frame supersedes histogram work for every older frame,
+  // even when playback throttling means this frame does not start a request.
+  ++_npyHistogramGeneration;
+  _npyPendingHistogram = {filename, frameIdx, subdir};
+  if(!isPlayback) {
+    clearTimeout(_npyHistogramTimer);
+    _npyHistogramTimer = null;
+    _npyIssuePendingHistogram();
+    return;
+  }
+
+  const delay = Math.max(0, 500 - (performance.now() - _npyLastPlaybackHistogramAt));
+  if(delay === 0 && !_npyHistogramTimer) {
+    _npyIssuePendingHistogram();
+  } else if(!_npyHistogramTimer) {
+    _npyHistogramTimer = setTimeout(_npyIssuePendingHistogram, delay);
+  }
+}
+
+function _npyRefreshHistogramNow() {
+  clearTimeout(_npyHistogramTimer);
+  _npyHistogramTimer = null;
+  _npyPendingHistogram = null;
+  ++_npyHistogramGeneration;
+  if(_npyCurrentFile) npyHistUpdate();
+}
 
 function npyOpen(filename) {
   switchPanel('viewer');
@@ -4811,8 +4873,11 @@ let _npyShowingMerge = false;
 let _npyPlayFps = 10;
 
 function npySelectFile(filename, subdir) {
-  npyPlayStop();
-  npyStackTlStop();
+  npyPlayStop(false);
+  npyStackTlStop(false);
+  clearTimeout(_npyDebounce);
+  clearTimeout(_npyBcgDebounce);
+  const fileSelectionGeneration = ++_npyFileSelectionGeneration;
   _npyCurrentFile = filename;
   _npySubdir = subdir;
   _npyShowingStack = false;
@@ -4845,7 +4910,7 @@ function npySelectFile(filename, subdir) {
   document.getElementById("npyExportStatus").textContent = '';
 
   if(ft === 'stack') {
-    npyLoadStackFile(filename, subdir);
+    npyLoadStackFile(filename, subdir, fileSelectionGeneration);
   } else {
     npyLoadFrame(filename, 0);
   }
@@ -4876,15 +4941,20 @@ function npyBcgChanged() {
   document.getElementById("npyBrightnessVal").textContent = document.getElementById("npyBrightness").value;
   document.getElementById("npyContrastVal").textContent = document.getElementById("npyContrast").value;
   document.getElementById("npyGammaVal").textContent = (parseInt(document.getElementById("npyGamma").value) / 100).toFixed(2);
+  if(_npyPlaying) npyPlayStop(false);
   clearTimeout(_npyBcgDebounce);
   _npyBcgDebounce = setTimeout(() => { if(_npyCurrentFile) npyReloadCurrent(); }, 120);
 }
 async function npyAutoAdjust() {
   if(!_npyCurrentFile) return;
+  if(_npyPlaying) npyPlayStop(false);
+  const file = _npyCurrentFile;
+  const subdir = _npySubdir;
   const idx = _npyFileTypeCache === 'stack'
     ? parseInt(document.getElementById("npyChannelSelect").value) || 0
     : parseInt(document.getElementById("npyFrameSlider").value) || 0;
-  const r = await api('cam_npy_auto_adjust', _npyCurrentFile, idx, _npySubdir);
+  const r = await api('cam_npy_auto_adjust', file, idx, subdir);
+  if(file !== _npyCurrentFile || subdir !== _npySubdir) return;
   if(r.error) { toast(r.error, "error"); return; }
   _npyDisplayMin = r.display_min;
   _npyDisplayMax = r.display_max;
@@ -4898,6 +4968,7 @@ async function npyAutoAdjust() {
 }
 function npyReloadCurrent() {
   if(!_npyCurrentFile) return;
+  if(_npyPlaying) npyPlayStop(false);
   if(_npyShowingStack) { _npyRenderStack(); return; }
   if(_npyShowingMerge) { _npyDoMerge(); return; }
   if(_npyFileTypeCache === 'stack') {
@@ -4910,16 +4981,57 @@ function npyReloadCurrent() {
 }
 
 /* ── Frame loading (video / timelapse / single channel view) ── */
-async function npyLoadFrame(filename, frameIdx, dispMin, dispMax) {
+async function npyLoadFrame(filename, frameIdx, dispMin, dispMax, options) {
+  options = options || {};
+  const requestGeneration = ++_npyFrameRequestGeneration;
+  const playbackGeneration = options.playbackGeneration;
+  const stackPlaybackGeneration = options.stackPlaybackGeneration;
+  const subdir = _npySubdir;
+  const isValid = () =>
+    requestGeneration === _npyFrameRequestGeneration &&
+    filename === _npyCurrentFile &&
+    subdir === _npySubdir &&
+    (playbackGeneration === undefined ||
+      (playbackGeneration === _npyPlaybackGeneration && _npyPlaying)) &&
+    (stackPlaybackGeneration === undefined ||
+      (stackPlaybackGeneration === _npyStackPlaybackGeneration && _npyStackTlPlaying));
   const bcg = _npyBcgValues();
   const dMin = dispMin !== undefined ? dispMin : _npyDisplayMin;
   const dMax = dispMax !== undefined ? dispMax : _npyDisplayMax;
   const r = await api('cam_npy_preview', filename, frameIdx,
-                       bcg.brightness, bcg.contrast, bcg.gamma, _npySubdir,
+                       bcg.brightness, bcg.contrast, bcg.gamma, subdir,
                        dMin, dMax);
+  if(!isValid()) return null;
   if(r.error) { document.getElementById("npyFileInfo").textContent = r.error; return; }
+
+  const imageUrl = "data:image/jpeg;base64," + r.image;
+  const candidate = new Image();
+  try {
+    if(typeof candidate.decode === "function") {
+      candidate.src = imageUrl;
+      await candidate.decode();
+    } else {
+      await new Promise((resolve, reject) => {
+        candidate.onload = resolve;
+        candidate.onerror = reject;
+        candidate.src = imageUrl;
+      });
+    }
+  } catch(e) {
+    candidate.src = "";
+    if(isValid()) document.getElementById("npyFileInfo").textContent = "Unable to decode preview frame";
+    return null;
+  }
+  if(!isValid()) {
+    candidate.src = "";
+    return null;
+  }
+
   const img = document.getElementById("npyImage");
-  img.src = "data:image/jpeg;base64," + r.image;
+  img.src = imageUrl;
+  candidate.onload = null;
+  candidate.onerror = null;
+  candidate.src = "";
   img.style.display = "block";
   document.getElementById("npyPlaceholder").style.display = "none";
 
@@ -4949,7 +5061,9 @@ async function npyLoadFrame(filename, frameIdx, dispMin, dispMax) {
       document.getElementById("npyFrameLabel").textContent = `${r.frame_idx + 1} / ${r.n_frames}`;
     }
   }
-  npyHistUpdate();
+  const isPlayback = playbackGeneration !== undefined ||
+                     stackPlaybackGeneration !== undefined;
+  _npyDisplayedFrameCommitted(filename, r.frame_idx, subdir, isPlayback);
   return r;
 }
 
@@ -4958,34 +5072,49 @@ let _npyPlaying = false;
 
 async function npyPlayToggle() {
   if(_npyPlaying) { npyPlayStop(); return; }
+  if(!_npyCurrentFile) return;
+  clearTimeout(_npyDebounce);
+  const playbackGeneration = ++_npyPlaybackGeneration;
+  _npyInvalidateFrameRequests();
   _npyPlaying = true;
+  _npyLastPlaybackHistogramAt = -Infinity;
   document.getElementById("npyPlayBtn").innerHTML = '&#9646;&#9646;';
   const slider = document.getElementById("npyFrameSlider");
+  const filename = _npyCurrentFile;
+  const frameCount = Math.max(1, (parseInt(slider.max) || 0) + 1);
   let lockedMin = undefined, lockedMax = undefined;
-  while(_npyPlaying) {
-    const t0 = performance.now();
-    let idx = parseInt(slider.value) + 1;
-    if(idx > parseInt(slider.max)) idx = 0;
-    slider.value = idx;
-    document.getElementById("npyFrameLabel").textContent =
-      `${idx + 1} / ${parseInt(slider.max) + 1}`;
-    if(_npyCurrentFile) {
-      const r = await npyLoadFrame(_npyCurrentFile, idx, lockedMin, lockedMax);
-      if(r && lockedMin === undefined) {
-        lockedMin = r.display_min;
-        lockedMax = r.display_max;
-      }
+  let idx = (parseInt(slider.value) + 1) % frameCount;
+  let targetTime = performance.now();
+  while(_npyPlaying && playbackGeneration === _npyPlaybackGeneration) {
+    const frameDuration = 1000 / _npyPlayFps;
+    const wait = targetTime - performance.now();
+    if(wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
+    if(!_npyPlaying || playbackGeneration !== _npyPlaybackGeneration) break;
+
+    const framesLate = Math.floor(Math.max(0, performance.now() - targetTime) / frameDuration);
+    if(framesLate > 0) {
+      idx = (idx + framesLate) % frameCount;
+      targetTime += framesLate * frameDuration;
     }
-    if(!_npyPlaying) break;
-    const elapsed = performance.now() - t0;
-    const wait = Math.max(0, (1000 / _npyPlayFps) - elapsed);
-    if(wait > 0) await new Promise(r => setTimeout(r, wait));
+
+    const r = await npyLoadFrame(filename, idx, lockedMin, lockedMax,
+                                 {playbackGeneration});
+    if(!_npyPlaying || playbackGeneration !== _npyPlaybackGeneration) break;
+    if(r && lockedMin === undefined) {
+      lockedMin = r.display_min;
+      lockedMax = r.display_max;
+    }
+    idx = (idx + 1) % frameCount;
+    targetTime += frameDuration;
   }
 }
-function npyPlayStop() {
+function npyPlayStop(refreshHistogram = true) {
   _npyPlaying = false;
+  ++_npyPlaybackGeneration;
+  _npyInvalidateFrameRequests();
   const btn = document.getElementById("npyPlayBtn");
   if(btn) btn.innerHTML = '&#9654;';
+  if(refreshHistogram) _npyRefreshHistogramNow();
 }
 function npySetPlaySpeed() {
   _npyPlayFps = parseInt(document.getElementById("npyPlaySpeed").value) || 10;
@@ -4993,26 +5122,41 @@ function npySetPlaySpeed() {
 
 function npyFrameChanged() {
   const idx = parseInt(document.getElementById("npyFrameSlider").value);
+  const filename = _npyCurrentFile;
+  const subdir = _npySubdir;
   document.getElementById("npyFrameLabel").textContent =
     `${idx + 1} / ${parseInt(document.getElementById("npyFrameSlider").max) + 1}`;
-  if(_npyPlaying) return;
+  if(_npyPlaying) npyPlayStop(false);
+  else _npyInvalidateFrameRequests();
+  const generation = _npyFrameRequestGeneration;
   clearTimeout(_npyDebounce);
   _npyDebounce = setTimeout(() => {
-    if(_npyCurrentFile) npyLoadFrame(_npyCurrentFile, idx);
+    if(filename && filename === _npyCurrentFile && subdir === _npySubdir &&
+       generation === _npyFrameRequestGeneration) {
+      npyLoadFrame(filename, idx);
+    }
   }, 80);
 }
 
 /* ── Stack: load file, populate channel dropdown, load sibling files ── */
-async function npyLoadStackFile(filename, subdir) {
+async function npyLoadStackFile(filename, subdir, fileSelectionGeneration) {
+  const loadGeneration = fileSelectionGeneration !== undefined
+    ? fileSelectionGeneration
+    : ++_npyFileSelectionGeneration;
+  const isValid = () =>
+    loadGeneration === _npyFileSelectionGeneration &&
+    filename === _npyCurrentFile && subdir === _npySubdir;
   const bcg = _npyBcgValues();
   const r = await api('cam_npy_preview', filename, 0,
                        bcg.brightness, bcg.contrast, bcg.gamma, subdir);
+  if(!isValid()) return;
   if(r.error) { document.getElementById("npyFileInfo").textContent = r.error; return; }
 
   const img = document.getElementById("npyImage");
   img.src = "data:image/jpeg;base64," + r.image;
   img.style.display = "block";
   document.getElementById("npyPlaceholder").style.display = "none";
+  _npyDisplayedFrameCommitted(filename, r.frame_idx || 0, subdir, false);
 
   _npyChannelColors = r.colors || [];
   const _COLOR_TO_CUBE = {none:'DIA', blue:'DAPI', green:'GFP', red:'TxRed'};
@@ -5032,6 +5176,7 @@ async function npyLoadStackFile(filename, subdir) {
 
   if(subdir) {
     const lr = await api('cam_list_captures', subdir);
+    if(!isValid()) return;
     _npyStackFiles = (lr && lr.files) ? lr.files.map(f => f.name).filter(n => n.startsWith('stack_')).reverse() : [];
   } else {
     _npyStackFiles = [];
@@ -5064,6 +5209,7 @@ function npyChannelChanged() {
 }
 
 function npyStackTlChanged() {
+  if(_npyStackTlPlaying) npyStackTlStop(false);
   const idx = parseInt(document.getElementById("npyStackTlSlider").value);
   document.getElementById("npyStackTlLabel").textContent =
     `${idx+1} / ${_npyStackFiles.length}`;
@@ -5089,43 +5235,63 @@ let _npyStackTlFps = 2;
 async function npyStackTlPlayToggle() {
   if(_npyStackTlPlaying) { npyStackTlStop(); return; }
   if(_npyStackFiles.length < 2) return;
+  const stackPlaybackGeneration = ++_npyStackPlaybackGeneration;
+  _npyInvalidateFrameRequests();
+  ++_npyMergeRequestGeneration;
   _npyStackTlPlaying = true;
+  _npyLastPlaybackHistogramAt = -Infinity;
   document.getElementById("npyStackTlPlayBtn").innerHTML = '&#9646;&#9646;';
   const slider = document.getElementById("npyStackTlSlider");
+  const playbackSubdir = _npySubdir;
+  const isValid = (filename) =>
+    _npyStackTlPlaying &&
+    stackPlaybackGeneration === _npyStackPlaybackGeneration &&
+    playbackSubdir === _npySubdir &&
+    (filename === undefined || filename === _npyCurrentFile);
   let lockedMin = undefined, lockedMax = undefined;
   let lockedRanges = undefined;
-  while(_npyStackTlPlaying) {
+  while(isValid()) {
     const t0 = performance.now();
     let idx = parseInt(slider.value) + 1;
     if(idx > parseInt(slider.max)) idx = 0;
+    const filename = _npyStackFiles[idx];
+    if(!filename || !isValid()) break;
     slider.value = idx;
     document.getElementById("npyStackTlLabel").textContent =
       `${idx+1} / ${_npyStackFiles.length}`;
-    _npyCurrentFile = _npyStackFiles[idx];
+    _npyCurrentFile = filename;
     if(_npyShowingMerge) {
-      const r = await _npyDoMerge(lockedRanges);
+      const r = await _npyDoMerge(lockedRanges, {stackPlaybackGeneration});
+      if(!isValid(filename)) break;
       if(r && lockedRanges === undefined) {
         lockedRanges = r.ranges;
       }
     } else {
       const ch = parseInt(document.getElementById("npyChannelSelect").value) || 0;
-      const r = await npyLoadFrame(_npyCurrentFile, ch, lockedMin, lockedMax);
+      const r = await npyLoadFrame(filename, ch, lockedMin, lockedMax,
+                                   {stackPlaybackGeneration});
+      if(!isValid(filename)) break;
       if(r && lockedMin === undefined) {
         lockedMin = r.display_min;
         lockedMax = r.display_max;
       }
     }
-    if(!_npyStackTlPlaying) break;
     const elapsed = performance.now() - t0;
     const wait = Math.max(0, (1000 / _npyStackTlFps) - elapsed);
     if(wait > 0) await new Promise(r => setTimeout(r, wait));
+    if(!isValid(filename)) break;
   }
 }
 
-function npyStackTlStop() {
+function npyStackTlStop(refreshHistogram = true) {
+  const wasPlaying = _npyStackTlPlaying;
   _npyStackTlPlaying = false;
+  ++_npyStackPlaybackGeneration;
+  _npyInvalidateFrameRequests();
+  ++_npyMergeRequestGeneration;
   const btn = document.getElementById("npyStackTlPlayBtn");
   if(btn) btn.innerHTML = '&#9654;';
+  if(refreshHistogram && wasPlaying) _npyRefreshHistogramNow();
 }
 
 function npyStackTlSetSpeed() {
@@ -5167,7 +5333,7 @@ const _COLOR_TO_CUBE_M = {none:'DIA', blue:'DAPI', green:'GFP', red:'TxRed'};
 
 async function npyMergeChannels() {
   if(!_npyCurrentFile) return;
-  npyStackTlStop();
+  npyStackTlStop(false);
   if(_npyShowingMerge) {
     _npyShowingMerge = false;
     document.getElementById("npyMergeBtn").textContent = "Merge Channels";
@@ -5226,11 +5392,24 @@ function npyMergeChanged() {
   _npyMergeDebounce = setTimeout(() => _npyDoMerge(), 100);
 }
 
-async function _npyDoMerge(lockedRanges) {
+async function _npyDoMerge(lockedRanges, options) {
   if(!_npyCurrentFile || !_npyShowingMerge) return;
+  options = options || {};
+  const requestGeneration = ++_npyMergeRequestGeneration;
+  const stackPlaybackGeneration = options.stackPlaybackGeneration;
+  const filename = _npyCurrentFile;
+  const subdir = _npySubdir;
+  const isValid = () =>
+    requestGeneration === _npyMergeRequestGeneration &&
+    filename === _npyCurrentFile &&
+    subdir === _npySubdir &&
+    _npyShowingMerge &&
+    (stackPlaybackGeneration === undefined ||
+      (stackPlaybackGeneration === _npyStackPlaybackGeneration && _npyStackTlPlaying));
   const gamma = parseInt(document.getElementById("npyMergeGamma").value) / 100.0;
   const rng = lockedRanges !== undefined ? lockedRanges : null;
-  const r = await api('cam_npy_merge', _npyCurrentFile, _npyMergeWeights, gamma, _npySubdir, rng);
+  const r = await api('cam_npy_merge', filename, _npyMergeWeights.slice(), gamma, subdir, rng);
+  if(!isValid()) return null;
   if(r.error) { toast(r.error, "error"); return; }
   const img = document.getElementById("npyImage");
   img.src = "data:image/jpeg;base64," + r.image;
@@ -5238,7 +5417,7 @@ async function _npyDoMerge(lockedRanges) {
   document.getElementById("npyPlaceholder").style.display = "none";
   const labels = (r.colors || []).map(c => _COLOR_TO_CUBE_M[c] || c).join(' + ');
   document.getElementById("npyFileInfo").textContent =
-    `${_npyCurrentFile} — Merge: ${labels}, ${r.width}×${r.height} px`;
+    `${filename} — Merge: ${labels}, ${r.width}×${r.height} px`;
   return r;
 }
 

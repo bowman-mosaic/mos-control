@@ -24,6 +24,7 @@ import io
 import json
 import os
 import time
+from collections import OrderedDict
 from datetime import datetime
 import tifffile
 
@@ -75,6 +76,14 @@ _raw_frame_condition = threading.Condition()
 _latest_raw_frame = None
 _latest_raw_frame_seq = 0
 
+# Viewer TIFF sources. Entries are invalidated when either the file size or
+# mtime changes. Pixel data is opened lazily so capture listings only read TIFF
+# headers, and the selected frame is copied before releasing the lock so an
+# evicted memmap cannot be closed while another request is using it.
+_TIFF_CACHE_MAX_ENTRIES = 4
+_tiff_cache = OrderedDict()
+_tiff_cache_lock = threading.RLock()
+
 # Circular buffer for continuous acquisition — kept alive while live view runs
 _circ_buf = None
 _circ_buf_size = 0
@@ -92,9 +101,11 @@ _disp_levels_initialized = False
 
 _gamma_lut = None          # cached uint8 LUT for current gamma value
 _gamma_lut_val = None      # gamma value the LUT was built for
+_gamma_lut_lock = threading.Lock()
 
 # Pseudo-color: None = grayscale, or (R, G, B) tuple for tinting
 _pseudo_color = None
+_USE_GLOBAL_PSEUDO_COLOR = object()
 _PSEUDO_COLOR_MAP = {
     "none":    None,
     "blue":    (0, 0, 255),
@@ -122,6 +133,123 @@ class CamError(Exception):
 
 _LIVE_PREVIEW_DIM = 800
 
+
+class _TiffCacheEntry:
+    def __init__(self, signature, shape, axes):
+        self.signature = signature
+        self.shape = tuple(shape)
+        self.axes = (axes or "").upper()
+        self.array = None
+
+
+class _UnsupportedTiffShape(ValueError):
+    def __init__(self, shape):
+        self.shape = tuple(shape)
+        super().__init__(f"Unsupported TIFF shape: {self.shape}")
+
+
+def _close_tiff_array(array):
+    """Close a cached numpy memmap, if the array owns one."""
+    seen = set()
+    current = array
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        mmap = getattr(current, "_mmap", None)
+        if mmap is not None:
+            try:
+                mmap.close()
+            except Exception:
+                pass
+            return
+        current = getattr(current, "base", None)
+
+
+def _discard_tiff_entry(entry):
+    if entry.array is not None:
+        _close_tiff_array(entry.array)
+        entry.array = None
+
+
+def _clear_tiff_cache():
+    """Clear cached TIFF metadata and close any mapped files."""
+    with _tiff_cache_lock:
+        entries = list(_tiff_cache.values())
+        _tiff_cache.clear()
+        for entry in entries:
+            _discard_tiff_entry(entry)
+
+
+def _tiff_signature(path):
+    stat = os.stat(path)
+    return stat.st_mtime_ns, stat.st_size
+
+
+def _read_tiff_metadata(path):
+    """Read the primary TIFF series shape/axes without decoding pixels."""
+    with tifffile.TiffFile(path) as tif:
+        series = tif.series[0]
+        return tuple(int(d) for d in series.shape), getattr(series, "axes", "")
+
+
+def _get_tiff_entry(path, load_array=False):
+    """Return an mtime/size-validated cached TIFF entry."""
+    cache_path = os.path.normcase(os.path.abspath(path))
+    signature = _tiff_signature(cache_path)
+    with _tiff_cache_lock:
+        entry = _tiff_cache.get(cache_path)
+        if entry is not None and entry.signature != signature:
+            _tiff_cache.pop(cache_path)
+            _discard_tiff_entry(entry)
+            entry = None
+
+        if entry is None:
+            shape, axes = _read_tiff_metadata(cache_path)
+            entry = _TiffCacheEntry(signature, shape, axes)
+            _tiff_cache[cache_path] = entry
+        else:
+            _tiff_cache.move_to_end(cache_path)
+
+        if load_array and entry.array is None:
+            try:
+                entry.array = tifffile.memmap(cache_path, mode="r")
+            except Exception:
+                # Compressed, tiled, or otherwise non-mappable TIFF layouts
+                # still benefit from avoiding a decode on every frame request.
+                entry.array = tifffile.imread(cache_path)
+            entry.shape = tuple(int(d) for d in entry.array.shape)
+
+        while len(_tiff_cache) > _TIFF_CACHE_MAX_ENTRIES:
+            _, evicted = _tiff_cache.popitem(last=False)
+            _discard_tiff_entry(evicted)
+        return entry
+
+
+def _get_tiff_frame(path, frame_idx=0):
+    """Return (detached frame, selected index, frame count, full shape)."""
+    with _tiff_cache_lock:
+        entry = _get_tiff_entry(path, load_array=True)
+        array = entry.array
+        shape = entry.shape
+
+        # Recorded camera files are either one grayscale frame or a grayscale
+        # frame stack. Preserve the existing API contract that every 3-D TIFF
+        # is indexed on its first axis; color TIFF support would also require
+        # coordinated changes to auto-adjust and export.
+        if len(shape) == 2:
+            selected_idx = 0
+            n_frames = 1
+            frame = array
+        elif len(shape) == 3:
+            n_frames = int(shape[0])
+            selected_idx = max(0, min(int(frame_idx), n_frames - 1))
+            frame = array[selected_idx]
+        else:
+            raise _UnsupportedTiffShape(shape)
+
+        # Detach one frame from the source before it can be evicted/closed.
+        return np.array(frame, copy=True), selected_idx, n_frames, shape
+
+
 def _auto_range(frame):
     """Estimate robust display levels without changing the raw frame."""
     return estimate_display_levels(frame, max_samples=50_000)
@@ -136,13 +264,14 @@ def _reset_auto_level_state():
 def _get_gamma_lut(gamma):
     """Return a uint8[256] lookup table for the given gamma value."""
     global _gamma_lut, _gamma_lut_val
-    if _gamma_lut_val == gamma and _gamma_lut is not None:
+    with _gamma_lut_lock:
+        if _gamma_lut_val == gamma and _gamma_lut is not None:
+            return _gamma_lut
+        lut = np.arange(256, dtype=np.float32) / 255.0
+        lut = np.power(lut, gamma)
+        _gamma_lut = (lut * 255).astype(np.uint8)
+        _gamma_lut_val = gamma
         return _gamma_lut
-    lut = np.arange(256, dtype=np.float32) / 255.0
-    lut = np.power(lut, gamma)
-    _gamma_lut = (lut * 255).astype(np.uint8)
-    _gamma_lut_val = gamma
-    return _gamma_lut
 
 
 def _normalize_u8(frame, max_dim=_LIVE_PREVIEW_DIM):
@@ -1332,8 +1461,8 @@ def cam_list_captures(subdir=None):
     for f in files:
         path = os.path.join(target, f)
         try:
-            arr = tifffile.imread(path)
-            shape = [int(d) for d in arr.shape]
+            entry = _get_tiff_entry(path)
+            shape = [int(d) for d in entry.shape]
         except Exception:
             shape = []
         result.append({"name": f, "shape": shape})
@@ -1362,7 +1491,8 @@ def cam_list_experiments():
 
 
 def _apply_bcg(frame, brightness=0, contrast=100, gamma=1.0, max_dim=1200,
-               display_min=None, display_max=None):
+               display_min=None, display_max=None,
+               pseudo_color=_USE_GLOBAL_PSEUDO_COLOR):
     """Apply brightness/contrast/gamma adjustments to a uint16 frame → uint8.
 
     At default settings (b=0, c=100, g=1.0) maps the full data range to 0-255.
@@ -1401,8 +1531,9 @@ def _apply_bcg(frame, brightness=0, contrast=100, gamma=1.0, max_dim=1200,
         lut = _get_gamma_lut(gamma)
         u8 = lut[u8]
 
-    pc = _pseudo_color
-    if pc is not None:
+    pc = (_pseudo_color if pseudo_color is _USE_GLOBAL_PSEUDO_COLOR
+          else pseudo_color)
+    if pc is not None and u8.ndim == 2:
         r, g, b = pc
         rgb = np.zeros((*u8.shape, 3), dtype=np.uint8)
         if r: rgb[:, :, 0] = (u8.astype(np.uint16) * r // 255).astype(np.uint8)
@@ -1459,21 +1590,15 @@ def cam_npy_histogram(filename, frame_idx=0, bins=256, subdir=None):
     path = os.path.join(base, filename)
     if not os.path.isfile(path):
         return {"error": f"File not found: {filename}"}
+    frame_idx = int(frame_idx)
     try:
-        arr = tifffile.imread(path)
+        frame, _, _, _ = _get_tiff_frame(path, frame_idx)
+    except _UnsupportedTiffShape as e:
+        return {"error": f"Unsupported shape: {e.shape}"}
     except Exception as e:
         return {"error": f"Cannot load: {e}"}
 
-    frame_idx = int(frame_idx)
     bins = int(bins)
-    if arr.ndim == 3:
-        frame_idx = max(0, min(frame_idx, arr.shape[0] - 1))
-        frame = arr[frame_idx]
-    elif arr.ndim == 2:
-        frame = arr
-    else:
-        return {"error": f"Unsupported shape: {arr.shape}"}
-
     flat = frame.ravel()
     sub = flat[::max(1, flat.size // 100000)]
     data_min, data_max = int(sub.min()), int(sub.max())
@@ -1695,15 +1820,17 @@ def cam_npy_preview(filename, frame_idx=0, brightness=0, contrast=100, gamma=1.0
     display_min/display_max: lock display range to prevent brightness flicker.
     subdir: optional relative path under _base_save_dir.
     """
-    global _pseudo_color, _pseudo_color_name
     base = os.path.normpath(_base_save_dir) if subdir else os.path.normpath(_save_dir)
     if subdir:
         base = os.path.join(base, subdir)
     path = os.path.join(base, filename)
     if not os.path.isfile(path):
         return {"error": f"File not found: {filename}"}
+    frame_idx = int(frame_idx)
     try:
-        arr = tifffile.imread(path)
+        frame, frame_idx, n_frames, shape = _get_tiff_frame(path, frame_idx)
+    except _UnsupportedTiffShape as e:
+        return {"error": f"Unsupported array shape: {e.shape}"}
     except Exception as e:
         return {"error": f"Cannot load: {e}"}
 
@@ -1713,59 +1840,43 @@ def cam_npy_preview(filename, frame_idx=0, brightness=0, contrast=100, gamma=1.0
 
     meta_color, meta_colors = _get_capture_meta(path)
 
-    frame_idx = int(frame_idx)
-    if arr.ndim == 3:
-        n_frames = int(arr.shape[0])
-        frame_idx = max(0, min(frame_idx, n_frames - 1))
-        frame = arr[frame_idx]
-    elif arr.ndim == 2:
-        frame = arr
-        n_frames = 1
-        frame_idx = 0
-    else:
-        return {"error": f"Unsupported array shape: {arr.shape}"}
-
     if meta_colors and frame_idx < len(meta_colors):
         frame_color = meta_colors[frame_idx]
     else:
         frame_color = meta_color
 
-    prev_color, prev_name = _pseudo_color, _pseudo_color_name
-    _pseudo_color = _PSEUDO_COLOR_MAP.get(frame_color)
-    _pseudo_color_name = frame_color
-    try:
-        dmin = float(display_min) if display_min is not None else None
-        dmax = float(display_max) if display_max is not None else None
-        u8, used_lo, used_hi = _apply_bcg(frame, brightness, contrast, gamma,
-                                          max_dim=1200, display_min=dmin,
-                                          display_max=dmax)
-        quality = 90
-        if _HAS_CV2:
-            if u8.ndim == 3:
-                u8 = cv2.cvtColor(u8, cv2.COLOR_RGB2BGR)
-            ok, buf = cv2.imencode(".jpg", u8,
-                                   [cv2.IMWRITE_JPEG_QUALITY, quality])
-            if ok:
-                b64 = base64.b64encode(buf.tobytes()).decode("ascii")
-            else:
-                b64 = _frame_to_base64(frame, quality=quality, max_dim=1200)
-        elif _HAS_PIL:
-            pil_mode = "RGB" if u8.ndim == 3 else "L"
-            img = _PILImage.fromarray(u8, mode=pil_mode)
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=quality)
-            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+    dmin = float(display_min) if display_min is not None else None
+    dmax = float(display_max) if display_max is not None else None
+    u8, used_lo, used_hi = _apply_bcg(
+        frame, brightness, contrast, gamma, max_dim=1200,
+        display_min=dmin, display_max=dmax,
+        pseudo_color=_PSEUDO_COLOR_MAP.get(frame_color),
+    )
+    quality = 90
+    if _HAS_CV2:
+        if u8.ndim == 3:
+            u8 = cv2.cvtColor(u8, cv2.COLOR_RGB2BGR)
+        ok, buf = cv2.imencode(".jpg", u8,
+                               [cv2.IMWRITE_JPEG_QUALITY, quality])
+        if ok:
+            b64 = base64.b64encode(buf.tobytes()).decode("ascii")
         else:
             b64 = _frame_to_base64(frame, quality=quality, max_dim=1200)
-    finally:
-        _pseudo_color, _pseudo_color_name = prev_color, prev_name
+    elif _HAS_PIL:
+        pil_mode = "RGB" if u8.ndim == 3 else "L"
+        img = _PILImage.fromarray(u8, mode=pil_mode)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality)
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+    else:
+        b64 = _frame_to_base64(frame, quality=quality, max_dim=1200)
     result = {
         "image": b64,
         "width": int(frame.shape[1]),
         "height": int(frame.shape[0]),
         "n_frames": n_frames,
         "frame_idx": frame_idx,
-        "shape": [int(d) for d in arr.shape],
+        "shape": [int(d) for d in shape],
         "color": frame_color,
         "display_min": used_lo,
         "display_max": used_hi,
