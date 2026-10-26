@@ -23,6 +23,8 @@ import base64
 import io
 import json
 import os
+import shutil
+import subprocess
 import time
 from collections import OrderedDict
 from datetime import datetime
@@ -56,6 +58,8 @@ _binning = (1, 1)
 
 _live_thread = None
 _live_stop = threading.Event()
+_mosaic_cancel = threading.Event()
+_MOSAIC_SETTLE_S = 0.2
 _live_fps = 0.0
 _live_exposure_changed = threading.Event()
 
@@ -75,6 +79,13 @@ _frame_event = threading.Event()
 _raw_frame_condition = threading.Condition()
 _latest_raw_frame = None
 _latest_raw_frame_seq = 0
+
+# One unsaved full-resolution snap retained while the preview confirmation
+# dialog is open. The browser receives only a JPEG preview; saving writes this
+# original uint16 frame as TIFF.
+_pending_snap_lock = threading.Lock()
+_pending_snap_frame = None
+_pending_snap_scale = None
 
 # Viewer TIFF sources. Entries are invalidated when either the file size or
 # mtime changes. Pixel data is opened lazily so capture listings only read TIFF
@@ -123,6 +134,20 @@ _FILTER_POS_COLOR = {
     3: "green",     # GFP
     4: "red",       # TxRed
 }
+
+# CoolSNAP EZ nominal 6.45 µm sensor pixels.  Values below are the sample-plane
+# µm/pixel at 1×1 binning for the microscope's current 1× camera path.  A user
+# calibration made with a stage micrometer replaces any nominal value.
+_SCALE_CONFIG_KEY = "coolsnap_scale"
+_OBJECTIVE_MAGNIFICATIONS = {
+    1: 2.0,
+    2: 4.0,
+    3: 4.0,
+    4: 10.0,
+    5: 20.0,
+    6: 40.0,
+}
+_CAMERA_PIXEL_PITCH_UM = 6.45
 
 
 class CamError(Exception):
@@ -478,21 +503,247 @@ def _save_experiment_json():
         pass
 
 
-def _record_capture(tif_path, color=None, colors=None):
-    """Record a capture in the experiment JSON. No-op outside an experiment."""
-    if _experiment_meta is None:
-        return
-    exp_dir = os.path.dirname(_experiment_json_path)
-    rel_key = os.path.relpath(tif_path, exp_dir).replace("\\", "/")
+def _objective_scale_1x(calibration):
+    """Return ``(µm/px, mm/px)`` owned by one objective at 1×1 binning."""
+    if not isinstance(calibration, dict):
+        return None
+    if "mm_per_pixel_1x" in calibration:
+        try:
+            mm = float(calibration["mm_per_pixel_1x"])
+        except (TypeError, ValueError):
+            mm = None
+        if mm is not None and np.isfinite(mm) and mm > 0:
+            return mm * 1000.0, mm
+    try:
+        um = float(calibration.get("um_per_pixel_1x"))
+    except (TypeError, ValueError):
+        return None
+    if np.isfinite(um) and um > 0:
+        return um, um / 1000.0
+    return None
+
+
+def _sync_objective_scale(objective, saved=None):
+    """Keep an objective's µm/px and mm/px on the same 1×1 value.
+
+    A saved mm/px wins. Older configs that only stored µm/px are converted.
+    Nominal defaults are left alone when the saved record has neither.
+    """
+    saved = saved if isinstance(saved, dict) else {}
+    if "mm_per_pixel_1x" in saved:
+        scale = _objective_scale_1x({"mm_per_pixel_1x": saved["mm_per_pixel_1x"]})
+    elif "um_per_pixel_1x" in saved:
+        scale = _objective_scale_1x({"um_per_pixel_1x": saved["um_per_pixel_1x"]})
+    else:
+        scale = _objective_scale_1x(objective)
+    if scale is None:
+        return objective
+    um, mm = scale
+    objective["um_per_pixel_1x"] = um
+    objective["mm_per_pixel_1x"] = mm
+    return objective
+
+
+def _default_scale_config():
+    objectives = {}
+    for pos, mag in _OBJECTIVE_MAGNIFICATIONS.items():
+        um = _CAMERA_PIXEL_PITCH_UM / mag
+        objectives[str(pos)] = {
+            "magnification": mag,
+            "um_per_pixel_1x": um,
+            "mm_per_pixel_1x": um / 1000.0,
+            "calibrated": False,
+        }
+    return {
+        "camera": "CoolSNAP EZ",
+        "pixel_pitch_um": _CAMERA_PIXEL_PITCH_UM,
+        "objectives": objectives,
+    }
+
+
+def _get_scale_config():
+    """Return persisted per-objective calibration merged with safe defaults."""
+    defaults = _default_scale_config()
+    try:
+        from modules import config as app_config
+        saved = app_config.load(_SCALE_CONFIG_KEY)
+    except Exception:
+        saved = None
+    if not isinstance(saved, dict):
+        return defaults
+    saved_objectives = saved.get("objectives")
+    if isinstance(saved_objectives, dict):
+        for pos, value in saved_objectives.items():
+            if pos in defaults["objectives"] and isinstance(value, dict):
+                defaults["objectives"][pos].update(value)
+                _sync_objective_scale(defaults["objectives"][pos], value)
+    return defaults
+
+
+def mosaic_step_nm(sensor_pixels, um_per_pixel_1x, overlap):
+    """Stage step between adjacent mosaic tiles, in nanometers.
+
+    The sample-plane field of view is ``sensor_pixels * um_per_pixel_1x``.
+    Binning cancels out of that product. ``overlap`` is the fraction of the
+    field shared with the next tile, so 0 steps by a full field and 0.1
+    keeps a 10% overlap.
+    """
+    pixels = float(sensor_pixels)
+    um_per_pixel = float(um_per_pixel_1x)
+    shared = float(overlap)
+    if not (pixels > 0) or not (um_per_pixel > 0):
+        raise ValueError("Sensor size and µm/pixel must be positive")
+    if not (0 <= shared < 1):
+        raise ValueError("Overlap must be from 0 up to, but not including, 1")
+    fov_um = pixels * um_per_pixel
+    return int(round(fov_um * (1.0 - shared) * 1000.0))
+
+
+def mosaic_tile_offsets(cols=3, rows=3):
+    """Serpentine ``(col, row)`` offsets centered on the current field.
+
+    ``+col`` is stage +X (jog right) and ``+row`` is stage +Y (jog up).
+    A 3×3 starts at the upper-left tile and snakes across each row.
+    """
+    cols = int(cols)
+    rows = int(rows)
+    if cols < 1 or rows < 1:
+        raise ValueError("Mosaic size must be at least 1×1")
+    col0 = -(cols // 2)
+    row0 = rows // 2
+    tiles = []
+    for r in range(rows):
+        row = row0 - r
+        col_order = range(cols) if r % 2 == 0 else range(cols - 1, -1, -1)
+        for c in col_order:
+            tiles.append((col0 + c, row))
+    return tiles
+
+
+def _capture_scale_metadata(objective=None, binning=None, z_nm=None):
+    """Resolve immutable scale metadata for one acquired frame."""
+    if objective is None or z_nm is None:
+        try:
+            import modules.nikon_ti as ti
+            if ti.is_connected():
+                if objective is None:
+                    objective = _safe(ti.nosepiece_get_position)
+                if z_nm is None:
+                    z_nm = _safe(ti.z_get_position)
+        except Exception:
+            pass
+
+    b = int(binning if binning is not None else _binning[0])
+    result = {"binning": b}
+    if z_nm is not None:
+        result["z_nm"] = int(z_nm)
+    try:
+        pos = int(objective)
+    except (TypeError, ValueError):
+        return result
+
+    calibration = _get_scale_config()["objectives"].get(str(pos))
+    result["objective_position"] = pos
+    scale_1x = _objective_scale_1x(calibration)
+    if scale_1x is None:
+        return result
+    base_um, base_mm = scale_1x
+    um_per_pixel = base_um * b
+    result.update({
+        "objective_magnification": float(calibration["magnification"]),
+        "um_per_pixel": um_per_pixel,
+        "um_per_pixel_1x": base_um,
+        "mm_per_pixel": base_mm * b,
+        "mm_per_pixel_1x": base_mm,
+        "calibration_source": (
+            "calibrated" if calibration.get("calibrated") else "nominal"
+        ),
+    })
+    return result
+
+
+def _make_capture_entry(color=None, colors=None, channels=None, scale=None):
     entry = {
         "timestamp": datetime.now().isoformat(),
         "color": color if color is not None else _pseudo_color_name,
     }
     if colors:
         entry["colors"] = colors
+    if channels:
+        entry["channels"] = channels
+    if scale:
+        entry["scale"] = scale
+    return entry
+
+
+def _record_capture(tif_path, color=None, colors=None, channels=None,
+                    scale=None, entry=None):
+    """Record a capture in experiment.json when an experiment is active."""
+    if _experiment_meta is None:
+        return
+    exp_dir = os.path.dirname(_experiment_json_path)
+    rel_key = os.path.relpath(tif_path, exp_dir).replace("\\", "/")
+    if entry is None:
+        entry = _make_capture_entry(color, colors, channels, scale)
     with _experiment_lock:
         _experiment_meta["captures"][rel_key] = entry
         _save_experiment_json()
+
+
+def _write_capture_tiff(path, data, color=None, colors=None, channels=None,
+                        scale=None):
+    """Write pixels plus portable MOS acquisition metadata to one TIFF."""
+    entry = _make_capture_entry(color, colors, channels, scale)
+    tifffile.imwrite(
+        path, data, photometric="minisblack",
+        metadata={"mos_control": entry},
+    )
+    _record_capture(path, entry=entry)
+
+
+def _read_tiff_capture_entry(tif_path):
+    """Read embedded MOS metadata without decoding image pixels."""
+    try:
+        with tifffile.TiffFile(tif_path) as tif:
+            description = tif.pages[0].description
+        data = json.loads(description) if description else {}
+        entry = data.get("mos_control") if isinstance(data, dict) else None
+        return entry if isinstance(entry, dict) else {}
+    except Exception:
+        return {}
+
+
+def _experiment_root_for_path(path):
+    """Return the experiment folder that contains experiment.json for `path`."""
+    d = os.path.dirname(path) if os.path.isfile(path) else path
+    basename = os.path.basename(d)
+    if basename in ("video", "stack", "timelapse"):
+        return os.path.dirname(d)
+    return d
+
+
+def _load_experiment_captures(exp_root):
+    exp_json = os.path.join(exp_root, "experiment.json")
+    if not os.path.isfile(exp_json):
+        return {}
+    try:
+        with open(exp_json) as f:
+            data = json.load(f)
+    except Exception:
+        return {}
+    return data.get("captures", {}) or {}
+
+
+def _get_capture_entry(tif_path):
+    """Load embedded metadata, supplemented by the experiment capture entry."""
+    entry = _read_tiff_capture_entry(tif_path)
+    exp_root = _experiment_root_for_path(tif_path)
+    captures = _load_experiment_captures(exp_root)
+    rel_key = os.path.relpath(tif_path, exp_root).replace("\\", "/")
+    experiment_entry = captures.get(rel_key)
+    if isinstance(experiment_entry, dict):
+        entry.update(experiment_entry)
+    return entry
 
 
 def _get_capture_meta(tif_path):
@@ -502,26 +753,55 @@ def _get_capture_meta(tif_path):
     experiment.json, then looks up the relative path in the captures dict.
     Returns ("none", None) if not found.
     """
-    d = os.path.dirname(tif_path)
-    basename = os.path.basename(d)
-    if basename in ("video", "stack", "timelapse"):
-        exp_root = os.path.dirname(d)
-    else:
-        exp_root = d
-    exp_json = os.path.join(exp_root, "experiment.json")
-    if not os.path.isfile(exp_json):
-        return "none", None
-    try:
-        with open(exp_json) as f:
-            data = json.load(f)
-    except Exception:
-        return "none", None
-    captures = data.get("captures", {})
-    rel_key = os.path.relpath(tif_path, exp_root).replace("\\", "/")
-    entry = captures.get(rel_key)
-    if entry is None:
+    entry = _get_capture_entry(tif_path)
+    if not entry:
         return "none", None
     return entry.get("color", "none"), entry.get("colors")
+
+
+def _stack_channel_identity(ch):
+    """Stable (position, marker, color, filter) key for a stack channel."""
+    if not isinstance(ch, dict):
+        return ("", "", "none", None)
+    return (
+        str(ch.get("position") or ""),
+        str(ch.get("marker_id") or ""),
+        str(ch.get("color") or "none"),
+        ch.get("filter"),
+    )
+
+
+def _match_stack_channel_index(channels, identity, fallback=0):
+    """Find the channel in `channels` that matches a saved identity.
+
+    Position+filter is preferred so stack-over-time follows the same
+    field of view even if channel order changes between files.
+    """
+    if not channels or identity is None:
+        return fallback
+    pos, marker_id, color, filt = identity
+    for i, ch in enumerate(channels):
+        if not isinstance(ch, dict):
+            continue
+        same_pos = ((pos and ch.get("position") == pos) or
+                    (marker_id and ch.get("marker_id") == marker_id))
+        if not same_pos:
+            continue
+        ch_color = str(ch.get("color") or "none")
+        if color and ch_color == color:
+            return i
+        if filt is not None and ch.get("filter") == filt:
+            return i
+        if not color and filt is None:
+            return i
+    if pos or marker_id:
+        for i, ch in enumerate(channels):
+            if not isinstance(ch, dict):
+                continue
+            if ((pos and ch.get("position") == pos) or
+                    (marker_id and ch.get("marker_id") == marker_id)):
+                return i
+    return fallback
 
 
 # ── Connection ───────────────────────────────────────────────────────────────
@@ -556,9 +836,12 @@ def connect():
 
 
 def disconnect():
-    global _hcam, _pvc_initialized
+    global _hcam, _pvc_initialized, _pending_snap_frame, _pending_snap_scale
     live_stop()
     capture_stop()
+    with _pending_snap_lock:
+        _pending_snap_frame = None
+        _pending_snap_scale = None
     with _lock:
         if _hcam is not None:
             try:
@@ -646,11 +929,11 @@ def snap():
 
 def snap_and_save():
     """Snap a single frame, save to disk, return (frame, path)."""
+    scale = _capture_scale_metadata()
     frame = snap()
     _ensure_save_dir()
     path = os.path.join(_save_dir, _next_name("snap"))
-    tifffile.imwrite(path, frame)
-    _record_capture(path)
+    _write_capture_tiff(path, frame, scale=scale)
     return frame, path
 
 
@@ -840,11 +1123,11 @@ def record_video(num_frames=100, duration_sec=None, fps=None):
 
 def record_video_and_save(num_frames=100, duration_sec=None, fps=None, color=None):
     """Record video and save to .tif. Returns filepath."""
+    scale = _capture_scale_metadata()
     video = record_video(num_frames, duration_sec=duration_sec, fps=fps)
     _ensure_save_dir()
     path = os.path.join(_save_dir, _next_name("video"))
-    tifffile.imwrite(path, video)
-    _record_capture(path, color=color)
+    _write_capture_tiff(path, video, color=color, scale=scale)
     return path
 
 
@@ -884,17 +1167,18 @@ def timelapse(num_frames=10, interval_sec=5.0):
 
 def timelapse_and_save(num_frames=10, interval_sec=5.0, color=None):
     """Run time-lapse and save. Returns filepath."""
+    scale = _capture_scale_metadata()
     stack = timelapse(num_frames, interval_sec)
     _ensure_save_dir()
     path = os.path.join(_save_dir, _next_name("timelapse"))
-    tifffile.imwrite(path, stack)
-    _record_capture(path, color=color)
+    _write_capture_tiff(path, stack, color=color, scale=scale)
     return path
 
 
 # ── Image stack accumulation ─────────────────────────────────────────────────
 
 _stack_frames = []
+_stack_scale_metadata = []
 _stack_lock = threading.Lock()
 
 
@@ -902,34 +1186,38 @@ _stack_was_live = False
 
 def stack_begin():
     """Clear the frame buffer and stop live preview to avoid conflicts."""
-    global _stack_frames, _stack_was_live
+    global _stack_frames, _stack_scale_metadata, _stack_was_live
     _stack_was_live = live_is_active()
     if _stack_was_live:
         live_stop()
     with _stack_lock:
         _stack_frames = []
+        _stack_scale_metadata = []
 
 
 def stack_snap():
     """Snap one frame and append to the stack buffer. Returns frame index."""
+    scale = _capture_scale_metadata()
     frame = snap()
     with _stack_lock:
         _stack_frames.append(frame.copy())
+        _stack_scale_metadata.append(scale)
         return len(_stack_frames)
 
 
 def stack_finish():
     """Save all accumulated frames as a single .tif and push event."""
-    global _stack_frames
+    global _stack_frames, _stack_scale_metadata
     with _stack_lock:
         if not _stack_frames:
             raise CamError("No frames in stack")
         stacked = np.stack(_stack_frames, axis=0)
+        channels = [{"scale": scale} for scale in _stack_scale_metadata]
         _stack_frames = []
+        _stack_scale_metadata = []
     _ensure_save_dir()
     path = os.path.join(_save_dir, _next_name("stack"))
-    tifffile.imwrite(path, stacked)
-    _record_capture(path)
+    _write_capture_tiff(path, stacked, channels=channels)
     fname = os.path.basename(path)
     push_event("onCamStatus", "idle", f"Saved: {fname}")
     push_event("onCamCaptureComplete", fname)
@@ -1021,12 +1309,38 @@ def _af_score(frame, metric="lapvar"):
     return float(gx.var() + gy.var())
 
 
+def _stack_channel_move(ti, ch, last_xy, last_z):
+    """Move XY/Z for a stack channel when coordinates are present.
+
+    Returns (moved, last_xy, last_z). Skips axes that already match the
+    previous channel so consecutive frames at the same marker stay put.
+    """
+    moved = False
+    x_nm, y_nm = ch.get("x_nm"), ch.get("y_nm")
+    z_nm = ch.get("z_nm")
+    if x_nm is not None and y_nm is not None:
+        xy = (int(x_nm), int(y_nm))
+        if xy != last_xy:
+            ti.x_move_absolute(xy[0])
+            ti.y_move_absolute(xy[1])
+            last_xy = xy
+            moved = True
+    if z_nm is not None:
+        z = int(z_nm)
+        if z != last_z:
+            ti.z_move_absolute(z)
+            last_z = z
+            moved = True
+    return moved, last_xy, last_z
+
+
 def stack_capture(channels, keep_shutter_open=False):
     """Execute an entire stack acquisition server-side for speed.
 
     channels: list of dicts, each with:
       objective, filter, lamp_intensity, lamp_on, exposure_ms, binning,
       il_shutter_open, il_nd, shutter_open
+      optional x_nm, y_nm, z_nm — stage position for this channel
     """
     import modules.nikon_ti as ti
     import modules.intensilight as il
@@ -1040,15 +1354,21 @@ def stack_capture(channels, keep_shutter_open=False):
 
     frames = []
     colors = []
+    channel_meta = []
     use_il = il.is_connected()
     try:
         use_scope = ti.is_connected()
+        last_xy = None
+        last_z = None
 
         for i, ch in enumerate(channels):
             push_event("onCamStatus", "busy",
                         f"Stack ch {i+1}/{len(channels)}")
 
+            moved = False
             if use_scope:
+                moved, last_xy, last_z = _stack_channel_move(
+                    ti, ch, last_xy, last_z)
                 ti.apply_preset(
                     objective=ch.get("objective"),
                     filter_pos=ch.get("filter"),
@@ -1068,8 +1388,8 @@ def stack_capture(channels, keep_shutter_open=False):
                     else:
                         il.shutter_close()
 
-            if use_scope or use_il:
-                time.sleep(0.5)
+            if use_scope or use_il or moved:
+                time.sleep(0.8 if moved else 0.5)
 
             exp = ch.get("exposure_ms")
             if exp is not None:
@@ -1086,6 +1406,22 @@ def stack_capture(channels, keep_shutter_open=False):
             else:
                 filt = ch.get("filter")
                 colors.append(_FILTER_POS_COLOR.get(filt, "none") if filt else "none")
+            channel_meta.append({
+                "color": colors[-1],
+                "filter": ch.get("filter"),
+                "objective": ch.get("objective"),
+                "binning": int(ch.get("binning") or _binning[0]),
+                "position": ch.get("position") or None,
+                "marker_id": ch.get("marker_id") or None,
+                "x_nm": ch.get("x_nm"),
+                "y_nm": ch.get("y_nm"),
+                "z_nm": ch.get("z_nm"),
+                "scale": _capture_scale_metadata(
+                    objective=ch.get("objective"),
+                    binning=ch.get("binning"),
+                    z_nm=ch.get("z_nm"),
+                ),
+            })
 
     finally:
         try:
@@ -1105,8 +1441,7 @@ def stack_capture(channels, keep_shutter_open=False):
     stacked = np.stack(frames, axis=0)
     _ensure_save_dir()
     path = os.path.join(_save_dir, _next_name("stack"))
-    tifffile.imwrite(path, stacked)
-    _record_capture(path, colors=colors)
+    _write_capture_tiff(path, stacked, colors=colors, channels=channel_meta)
     fname = os.path.basename(path)
     push_event("onCamStatus", "idle", f"Saved: {fname}")
     push_event("onCamCaptureComplete", fname)
@@ -1231,15 +1566,82 @@ def cam_get_binning():
 
 
 @expose
-def cam_snap():
-    """Snap and return base64 image for preview."""
+def cam_get_scale_calibration():
+    """Return per-objective sample-plane calibration at 1×1 binning."""
+    return {"ok": True, **_get_scale_config()}
+
+
+@expose
+def cam_set_scale_calibration(objective_position, um_per_pixel_1x):
+    """Persist a stage-micrometer calibration for one turret position."""
     try:
+        pos = int(objective_position)
+        value = float(um_per_pixel_1x)
+    except (TypeError, ValueError):
+        return {"error": "Objective position and µm/pixel must be numeric"}
+    if str(pos) not in _get_scale_config()["objectives"]:
+        return {"error": f"Unknown objective position: {pos}"}
+    if not np.isfinite(value) or value <= 0:
+        return {"error": "µm/pixel must be greater than zero"}
+
+    config = _get_scale_config()
+    objective = config["objectives"][str(pos)]
+    objective["um_per_pixel_1x"] = value
+    objective["mm_per_pixel_1x"] = value / 1000.0
+    objective["calibrated"] = True
+    try:
+        from modules import config as app_config
+        app_config.save(_SCALE_CONFIG_KEY, config)
+    except Exception as e:
+        return {"error": f"Could not save calibration: {e}"}
+    return {"ok": True, **config}
+
+
+@expose
+def cam_snap():
+    """Snap and retain the full frame while returning a JPEG preview."""
+    global _pending_snap_frame, _pending_snap_scale
+    try:
+        scale = _capture_scale_metadata()
         frame = snap()
+        with _pending_snap_lock:
+            _pending_snap_frame = frame.copy()
+            _pending_snap_scale = scale
         b64 = _frame_to_base64(frame)
         return {"ok": True, "image": b64,
                 "width": int(frame.shape[1]), "height": int(frame.shape[0])}
     except Exception as e:
         return {"error": str(e)}
+
+
+@expose
+def cam_snap_save_pending():
+    """Save the full-resolution frame currently shown in the snap dialog."""
+    global _pending_snap_frame, _pending_snap_scale
+    with _pending_snap_lock:
+        if _pending_snap_frame is None:
+            return {"error": "No unsaved snap is available"}
+        frame = _pending_snap_frame
+        scale = _pending_snap_scale
+        try:
+            _ensure_save_dir()
+            path = os.path.join(_save_dir, _next_name("snap"))
+            _write_capture_tiff(path, frame, scale=scale)
+        except Exception as e:
+            return {"error": str(e)}
+        _pending_snap_frame = None
+        _pending_snap_scale = None
+    return {"ok": True, "file": os.path.basename(path)}
+
+
+@expose
+def cam_snap_discard():
+    """Discard the full-resolution frame retained for preview."""
+    global _pending_snap_frame, _pending_snap_scale
+    with _pending_snap_lock:
+        _pending_snap_frame = None
+        _pending_snap_scale = None
+    return {"ok": True}
 
 
 @expose
@@ -1337,6 +1739,113 @@ def cam_autofocus(z_range_nm=20000, steps=11, exposure_ms=None, metric="lapvar")
         return {"ok": True, "best_z_nm": int(best_z), "best_score": float(best_score),
                 "scores": [float(s) for s in scores],
                 "z_positions": [int(z) for z in z_positions]}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def mosaic_cancel():
+    """Ask a running mosaic to stop after the current tile."""
+    _mosaic_cancel.set()
+
+
+def capture_mosaic(cols=3, rows=3, overlap=0.1):
+    """Save a centered grid of fields and return the stage to the start.
+
+    Each tile is one camera field, stepped by the calibrated sample-plane
+    scale. ``overlap`` is the fraction of that field shared with the next
+    tile. The current XY position is the center tile.
+    """
+    import modules.nikon_ti as ti
+
+    if _hcam is None:
+        raise CamError("Camera not connected")
+    if not ti.is_connected():
+        raise CamError("Microscope not connected")
+    cols, rows = int(cols), int(rows)
+    if cols != 3 or rows != 3:
+        raise CamError("Only a 3×3 mosaic is supported")
+
+    scale = _capture_scale_metadata()
+    um_per_pixel = scale.get("um_per_pixel_1x")
+    if not um_per_pixel:
+        raise CamError("Current objective has no mm/px scale")
+    step_x = mosaic_step_nm(_sensor_w, um_per_pixel, overlap)
+    step_y = mosaic_step_nm(_sensor_h, um_per_pixel, overlap)
+    if step_x <= 0 or step_y <= 0:
+        raise CamError("Mosaic step is too small for this objective")
+
+    origin = ti.xy_get_position()
+    origin_x, origin_y = int(origin["x"]), int(origin["y"])
+    tiles = mosaic_tile_offsets(cols, rows)
+    was_live = live_is_active()
+    if was_live:
+        live_stop()
+
+    _mosaic_cancel.clear()
+    saved = []
+    cancelled = False
+    try:
+        for index, (col, row) in enumerate(tiles, start=1):
+            if _mosaic_cancel.is_set():
+                cancelled = True
+                break
+            ti.x_move_absolute(origin_x + col * step_x)
+            ti.y_move_absolute(origin_y + row * step_y)
+            time.sleep(_MOSAIC_SETTLE_S)
+            frame_scale = dict(_capture_scale_metadata())
+            frame_scale["mosaic"] = {
+                "cols": cols,
+                "rows": rows,
+                "col": col,
+                "row": row,
+                "index": index,
+                "step_x_nm": step_x,
+                "step_y_nm": step_y,
+                "origin_x_nm": origin_x,
+                "origin_y_nm": origin_y,
+            }
+            frame = snap()
+            _ensure_save_dir()
+            path = os.path.join(_save_dir, _next_name("mosaic"))
+            _write_capture_tiff(path, frame, scale=frame_scale)
+            name = os.path.basename(path)
+            saved.append(name)
+            push_event("onMosaicProgress", index, len(tiles), name)
+            push_event("onCamCaptureComplete", name)
+        return {
+            "files": saved,
+            "count": len(saved),
+            "cancelled": cancelled,
+            "step_x_nm": step_x,
+            "step_y_nm": step_y,
+            "origin_x_nm": origin_x,
+            "origin_y_nm": origin_y,
+        }
+    finally:
+        try:
+            ti.x_move_absolute(origin_x)
+            ti.y_move_absolute(origin_y)
+        except Exception:
+            pass
+        if was_live:
+            try:
+                live_start()
+            except Exception:
+                pass
+
+
+@expose
+def cam_mosaic_cancel():
+    """Stop the mosaic after the tile currently being saved."""
+    mosaic_cancel()
+    return {"ok": True}
+
+
+@expose
+def cam_capture_mosaic(cols=3, rows=3, overlap=0.1):
+    """Capture a 3×3 mosaic centered on the current stage position."""
+    try:
+        return {"ok": True, **capture_mosaic(cols, rows, overlap)}
     except Exception as e:
         return {"error": str(e)}
 
@@ -1457,6 +1966,8 @@ def cam_list_captures(subdir=None):
         return {"files": []}
     files = [f for f in os.listdir(target) if f.endswith(".tif")]
     files.sort(key=lambda f: os.path.getmtime(os.path.join(target, f)), reverse=True)
+    exp_root = _experiment_root_for_path(target)
+    captures = _load_experiment_captures(exp_root)
     result = []
     for f in files:
         path = os.path.join(target, f)
@@ -1465,7 +1976,19 @@ def cam_list_captures(subdir=None):
             shape = [int(d) for d in entry.shape]
         except Exception:
             shape = []
-        result.append({"name": f, "shape": shape})
+        rel_key = os.path.relpath(path, exp_root).replace("\\", "/")
+        cap = _read_tiff_capture_entry(path)
+        exp_cap = captures.get(rel_key)
+        if isinstance(exp_cap, dict):
+            cap.update(exp_cap)
+        item = {"name": f, "shape": shape}
+        if cap.get("colors"):
+            item["colors"] = cap["colors"]
+        if cap.get("channels"):
+            item["channels"] = cap["channels"]
+        if cap.get("scale"):
+            item["scale"] = cap["scale"]
+        result.append(item)
     return {"files": result}
 
 
@@ -1838,12 +2361,20 @@ def cam_npy_preview(filename, frame_idx=0, brightness=0, contrast=100, gamma=1.0
     contrast = float(contrast)
     gamma = float(gamma)
 
-    meta_color, meta_colors = _get_capture_meta(path)
+    meta_entry = _get_capture_entry(path)
+    meta_color = meta_entry.get("color", "none") if meta_entry else "none"
+    meta_colors = meta_entry.get("colors") if meta_entry else None
+    meta_channels = meta_entry.get("channels") if meta_entry else None
 
     if meta_colors and frame_idx < len(meta_colors):
         frame_color = meta_colors[frame_idx]
     else:
         frame_color = meta_color
+    frame_scale = meta_entry.get("scale") if meta_entry else None
+    if meta_channels and frame_idx < len(meta_channels):
+        channel = meta_channels[frame_idx]
+        if isinstance(channel, dict) and isinstance(channel.get("scale"), dict):
+            frame_scale = channel["scale"]
 
     dmin = float(display_min) if display_min is not None else None
     dmax = float(display_max) if display_max is not None else None
@@ -1883,6 +2414,10 @@ def cam_npy_preview(filename, frame_idx=0, brightness=0, contrast=100, gamma=1.0
     }
     if meta_colors:
         result["colors"] = meta_colors
+    if meta_channels:
+        result["channels"] = meta_channels
+    if frame_scale:
+        result["scale"] = frame_scale
     return result
 
 
@@ -2032,6 +2567,97 @@ _EXPORTS_DIR = os.path.join(os.path.dirname(__file__), "..", "exports")
 
 def _ensure_exports_dir():
     os.makedirs(_EXPORTS_DIR, exist_ok=True)
+
+
+def _find_ffmpeg():
+    """Locate FFmpeg, including its common WinGet installation directory."""
+    path = shutil.which("ffmpeg")
+    if path:
+        return path
+    if os.name == "nt":
+        winget = os.path.expandvars(
+            r"%LOCALAPPDATA%\Microsoft\WinGet\Packages"
+        )
+        if os.path.isdir(winget):
+            for root, _dirs, files in os.walk(winget):
+                if "ffmpeg.exe" in files:
+                    return os.path.join(root, "ffmpeg.exe")
+    return None
+
+
+_FFMPEG = _find_ffmpeg()
+
+
+def _encode_h264_mp4(out_path, fps, frame_w, frame_h, frames):
+    """Encode RGB frames as macOS-compatible H.264/yuv420p MP4."""
+    if not _FFMPEG:
+        raise RuntimeError(
+            "FFmpeg is required for MP4 export but was not found"
+        )
+
+    fps = max(1, int(fps))
+    frame_w, frame_h = int(frame_w), int(frame_h)
+    cmd = [
+        _FFMPEG,
+        "-y",
+        "-hide_banner",
+        "-loglevel", "error",
+        "-f", "rawvideo",
+        "-pix_fmt", "rgb24",
+        "-s:v", f"{frame_w}x{frame_h}",
+        "-r", str(fps),
+        "-i", "pipe:0",
+        "-an",
+        "-c:v", "libx264",
+        "-preset", "medium",
+        "-crf", "18",
+        "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+        "-pix_fmt", "yuv420p",
+        "-color_range", "tv",
+        "-colorspace", "bt709",
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
+        "-movflags", "+faststart",
+        out_path,
+    ]
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    written = 0
+    write_error = None
+    try:
+        for frame in frames:
+            rgb = np.asarray(frame, dtype=np.uint8)
+            if rgb.shape != (frame_h, frame_w, 3):
+                raise ValueError(
+                    f"MP4 frame has shape {rgb.shape}; expected "
+                    f"{(frame_h, frame_w, 3)}"
+                )
+            proc.stdin.write(np.ascontiguousarray(rgb).tobytes())
+            written += 1
+    except Exception as exc:
+        write_error = exc
+    finally:
+        if proc.stdin:
+            try:
+                proc.stdin.close()
+            except Exception:
+                pass
+
+    stderr = proc.stderr.read().decode(errors="replace") if proc.stderr else ""
+    return_code = proc.wait()
+    if write_error is not None or return_code != 0 or written == 0:
+        try:
+            os.remove(out_path)
+        except OSError:
+            pass
+        detail = str(write_error) if write_error is not None else stderr.strip()
+        raise RuntimeError(detail or "FFmpeg did not encode any frames")
+    return written
 
 
 def _render_frame_rgb(frame, color_name, brightness=0, contrast=100, gamma=1.0,
@@ -2189,8 +2815,6 @@ def cam_export_merge_image(filename, weights=None, gamma=1.0, subdir=None):
 def cam_export_mp4(filename, fps=10, brightness=0, contrast=100, gamma=1.0,
                    subdir=None, display_min=None, display_max=None):
     """Export a video or timelapse .tif as an MP4 with display adjustments."""
-    if not _HAS_CV2:
-        return {"error": "OpenCV required for video export"}
     base = os.path.normpath(_base_save_dir) if subdir else os.path.normpath(_save_dir)
     if subdir:
         base = os.path.join(base, subdir)
@@ -2219,19 +2843,29 @@ def cam_export_mp4(filename, fps=10, brightness=0, contrast=100, gamma=1.0,
     out_name = f"{stem}.mp4"
     out_path = os.path.join(_EXPORTS_DIR, out_name)
 
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(out_path, fourcc, fps, (frame_w, frame_h))
     try:
-        writer.write(cv2.cvtColor(first_rgb, cv2.COLOR_RGB2BGR))
-        for i in range(1, n_frames):
-            rgb, _, _ = _render_frame_rgb(arr[i], meta_color, brightness,
-                                          contrast, gamma,
-                                          display_min=lo, display_max=hi)
-            writer.write(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
-    finally:
-        writer.release()
+        def rendered_frames():
+            yield first_rgb
+            for i in range(1, n_frames):
+                rgb, _, _ = _render_frame_rgb(
+                    arr[i], meta_color, brightness, contrast, gamma,
+                    display_min=lo, display_max=hi,
+                )
+                yield rgb
 
-    return {"ok": True, "filename": out_name, "frames": n_frames}
+        written = _encode_h264_mp4(
+            out_path, fps, frame_w, frame_h, rendered_frames()
+        )
+    except Exception as e:
+        return {"error": f"MP4 export failed: {e}"}
+
+    return {
+        "ok": True,
+        "filename": out_name,
+        "frames": written,
+        "codec": "H.264",
+        "pixel_format": "yuv420p",
+    }
 
 
 @expose
@@ -2239,8 +2873,6 @@ def cam_export_stack_tl_mp4(filenames, channel=0, fps=2, brightness=0,
                             contrast=100, gamma=1.0, subdir=None,
                             display_min=None, display_max=None):
     """Export a stack timelapse (single channel across files) as MP4."""
-    if not _HAS_CV2:
-        return {"error": "OpenCV required for video export"}
     if not filenames or len(filenames) < 2:
         return {"error": "Need at least 2 stack files"}
 
@@ -2256,9 +2888,16 @@ def cam_export_stack_tl_mp4(filenames, channel=0, fps=2, brightness=0,
     first_arr = tifffile.imread(first_path)
     if first_arr.ndim != 3:
         return {"error": "Files must be multi-channel stacks"}
-    _, meta_colors = _get_capture_meta(first_path)
+    first_entry = _get_capture_entry(first_path)
+    meta_colors = first_entry.get("colors")
+    first_channels = first_entry.get("channels") or []
+    identity = None
+    if channel < len(first_channels):
+        identity = _stack_channel_identity(first_channels[channel])
     color = (meta_colors[channel] if meta_colors and channel < len(meta_colors)
              else "none")
+    if identity and identity[2]:
+        color = identity[2]
     frame = first_arr[min(channel, first_arr.shape[0] - 1)]
     first_rgb, lo, hi = _render_frame_rgb(
         frame, color, brightness, contrast, gamma,
@@ -2270,35 +2909,47 @@ def cam_export_stack_tl_mp4(filenames, channel=0, fps=2, brightness=0,
     out_name = _next_name(f"stack_tl_ch{channel}", ext=".mp4", directory=_EXPORTS_DIR)
     out_path = os.path.join(_EXPORTS_DIR, out_name)
 
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(out_path, fourcc, fps, (frame_w, frame_h))
     try:
-        writer.write(cv2.cvtColor(first_rgb, cv2.COLOR_RGB2BGR))
-        for fn in filenames[1:]:
-            p = os.path.join(base, fn)
-            if not os.path.isfile(p):
-                continue
-            arr = tifffile.imread(p)
-            if arr.ndim != 3:
-                continue
-            _, mc = _get_capture_meta(p)
-            c = (mc[channel] if mc and channel < len(mc) else "none")
-            f = arr[min(channel, arr.shape[0] - 1)]
-            rgb, _, _ = _render_frame_rgb(f, c, brightness, contrast, gamma,
-                                          display_min=lo, display_max=hi)
-            writer.write(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
-    finally:
-        writer.release()
+        def rendered_frames():
+            yield first_rgb
+            for fn in filenames[1:]:
+                p = os.path.join(base, fn)
+                if not os.path.isfile(p):
+                    continue
+                arr = tifffile.imread(p)
+                if arr.ndim != 3:
+                    continue
+                entry = _get_capture_entry(p)
+                mc = entry.get("colors")
+                chs = entry.get("channels") or []
+                ch_idx = _match_stack_channel_index(chs, identity, channel)
+                c = (mc[ch_idx] if mc and ch_idx < len(mc) else "none")
+                f = arr[min(ch_idx, arr.shape[0] - 1)]
+                rgb, _, _ = _render_frame_rgb(
+                    f, c, brightness, contrast, gamma,
+                    display_min=lo, display_max=hi,
+                )
+                yield rgb
 
-    return {"ok": True, "filename": out_name, "frames": len(filenames)}
+        written = _encode_h264_mp4(
+            out_path, fps, frame_w, frame_h, rendered_frames()
+        )
+    except Exception as e:
+        return {"error": f"MP4 export failed: {e}"}
+
+    return {
+        "ok": True,
+        "filename": out_name,
+        "frames": written,
+        "codec": "H.264",
+        "pixel_format": "yuv420p",
+    }
 
 
 @expose
 def cam_export_merge_mp4(filenames, weights=None, merge_gamma=1.0, fps=2,
                          subdir=None):
     """Export a merged stack timelapse as MP4."""
-    if not _HAS_CV2:
-        return {"error": "OpenCV required for video export"}
     if not filenames or len(filenames) < 2:
         return {"error": "Need at least 2 stack files"}
 
@@ -2326,22 +2977,33 @@ def cam_export_merge_mp4(filenames, weights=None, merge_gamma=1.0, fps=2,
     out_name = _next_name("stack_tl_merge", ext=".mp4", directory=_EXPORTS_DIR)
     out_path = os.path.join(_EXPORTS_DIR, out_name)
 
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(out_path, fourcc, fps, (frame_w, frame_h))
     try:
-        writer.write(cv2.cvtColor(first_rgb, cv2.COLOR_RGB2BGR))
-        for fn in filenames[1:]:
-            p = os.path.join(base, fn)
-            if not os.path.isfile(p):
-                continue
-            arr = tifffile.imread(p)
-            if arr.ndim != 3:
-                continue
-            _, mc = _get_capture_meta(p)
-            rgb, _ = _render_merge_rgb(arr, mc or meta_colors, weights,
-                                       merge_gamma, ranges=locked_ranges)
-            writer.write(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
-    finally:
-        writer.release()
+        def rendered_frames():
+            yield first_rgb
+            for fn in filenames[1:]:
+                p = os.path.join(base, fn)
+                if not os.path.isfile(p):
+                    continue
+                arr = tifffile.imread(p)
+                if arr.ndim != 3:
+                    continue
+                _, mc = _get_capture_meta(p)
+                rgb, _ = _render_merge_rgb(
+                    arr, mc or meta_colors, weights, merge_gamma,
+                    ranges=locked_ranges,
+                )
+                yield rgb
 
-    return {"ok": True, "filename": out_name, "frames": len(filenames)}
+        written = _encode_h264_mp4(
+            out_path, fps, frame_w, frame_h, rendered_frames()
+        )
+    except Exception as e:
+        return {"error": f"MP4 export failed: {e}"}
+
+    return {
+        "ok": True,
+        "filename": out_name,
+        "frames": written,
+        "codec": "H.264",
+        "pixel_format": "yuv420p",
+    }

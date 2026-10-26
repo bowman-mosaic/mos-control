@@ -23,8 +23,8 @@ from syringe_pump_control import list_serial_ports         # noqa: E402
 NUM_CAVRO = 4
 
 # Aspiration / refill plunger speed (counts/s). Pump max (~2900) cavitates
-# on the pull; 2000 was clean in bench tests. Dispense/flush still use max.
-REFILL_VELOCITY_COUNTS = 2000
+# on the pull; 1800 is used to stay clear of cavitation. Dispense/flush still use max.
+REFILL_VELOCITY_COUNTS = 1800
 
 _serial = None
 _serial_lock = threading.Lock()   # protects connect/disconnect
@@ -643,15 +643,24 @@ def cavro_get_status(idx):
 
 @expose
 def cavro_continuous_start(idx, from_port, to_port, velocity_ml=None,
-                           cycles=0):
-    """Pump fluid semi-continuously: aspirate full syringe from from_port,
-    dispense to to_port, repeat.
+                           cycles=0, mode="push"):
+    """Pump fluid semi-continuously between two valve ports.
 
     cycles: number of full aspirate/dispense cycles.  0 = run until stopped.
+    mode: ``push`` applies velocity_ml to the push phase and uses the fixed
+          refill rate while pulling. ``pull`` applies velocity_ml to the pull
+          phase and uses the fixed refill rate while pushing.
     """
     if not _check(idx):
         return {"error": "Not connected"}
-    _flush_port[idx] = int(from_port)
+    mode = str(mode).lower()
+    if mode not in ("push", "pull"):
+        return {"error": "Mode must be 'push' or 'pull'"}
+    from_port = int(from_port)
+    to_port = int(to_port)
+    if from_port == to_port:
+        return {"error": "From and to ports must be different"}
+    _flush_port[idx] = from_port if mode == "push" else to_port
     if _cont_threads[idx] and _cont_threads[idx].is_alive():
         _cont_stops[idx].set()
         try:
@@ -665,9 +674,9 @@ def cavro_continuous_start(idx, from_port, to_port, velocity_ml=None,
     ready = threading.Event()
     t = threading.Thread(
         target=_continuous_thread,
-        args=(idx, int(from_port), int(to_port),
+        args=(idx, from_port, to_port,
               float(velocity_ml) if velocity_ml is not None else None,
-              int(cycles), ready),
+              int(cycles), ready, mode),
         daemon=True,
     )
     _cont_threads[idx] = t
@@ -697,24 +706,29 @@ def cavro_continuous_is_running(idx):
     return False
 
 
-def _continuous_thread(idx, from_port, to_port, velocity_ml, cycles, ready=None):
+def _continuous_thread(idx, from_port, to_port, velocity_ml, cycles,
+                       ready=None, mode="push"):
     pump = _pumps[idx]
     syringe_ml = pump.syringe_volume_ml
     max_vel = _max_vel(pump)
     refill_vel = _refill_vel(pump)
-    # Convert mL/s to counts/s, clamped to pump max
+    # Convert mL/s to counts/s, clamped to pump max. Preserve the original
+    # push-mode default (max-speed dispense) when no flow rate is supplied.
     max_v = int(5800 / pump.velocity_scale)
     if velocity_ml:
-        dispense_vel = max(3, min(round(velocity_ml * pump.counts_per_ml), max_v))
+        flow_vel = max(3, min(round(velocity_ml * pump.counts_per_ml), max_v))
     else:
-        dispense_vel = None
+        flow_vel = None
+    pull_vel = (flow_vel or refill_vel) if mode == "pull" else refill_vel
+    push_vel = refill_vel if mode == "pull" else (flow_vel or max_vel)
     n = 0
-    print(f"[Cavro C{idx+1}] continuous: from={from_port} to={to_port} "
-          f"vel_ml={velocity_ml} dispense_vel_counts={dispense_vel} "
-          f"refill_vel={refill_vel} max_vel={max_vel} syringe={syringe_ml}mL")
+    print(f"[Cavro C{idx+1}] continuous {mode}: from={from_port} "
+          f"to={to_port} vel_ml={velocity_ml} pull_vel={pull_vel} "
+          f"push_vel={push_vel} refill_vel={refill_vel} max_vel={max_vel} "
+          f"syringe={syringe_ml}mL")
     try:
         push_event("onCavroContinuousUpdate", idx, "started",
-                   f"Continuous: {from_port}→{to_port}" +
+                   f"{mode.upper()}: {from_port}→{to_port}" +
                    (f", {cycles} cycles" if cycles else ", until stopped"))
 
         # Pre-fill: batch valve switch + refill into one command
@@ -723,8 +737,12 @@ def _continuous_thread(idx, from_port, to_port, velocity_ml, cycles, ready=None)
         full_counts = int(syringe_ml * pump.counts_per_ml)
         pump.start_batch()
         pump.switch_valve(from_port)
-        pump.move_absolute_counts(full_counts, velocity_counts=refill_vel, wait=False)
-        pump.execute(wait=True)
+        pump.move_absolute_counts(full_counts, velocity_counts=pull_vel, wait=False)
+        try:
+            pump.execute(wait=True)
+        except Exception:
+            if not _cont_stops[idx].is_set():
+                raise
         print(f"[Cavro C{idx+1}] pre-fill done, plunger at {pump.volume_ml:.3f} mL")
         if ready:
             ready.set()
@@ -739,8 +757,7 @@ def _continuous_thread(idx, from_port, to_port, velocity_ml, cycles, ready=None)
             pump.start_batch()
             pump.switch_valve(to_port)
             try:
-                vel = dispense_vel if dispense_vel else max_vel
-                pump.move_absolute_counts(0, velocity_counts=vel, wait=False)
+                pump.move_absolute_counts(0, velocity_counts=push_vel, wait=False)
                 pump.execute(wait=True)
             except Exception:
                 pass
@@ -754,7 +771,7 @@ def _continuous_thread(idx, from_port, to_port, velocity_ml, cycles, ready=None)
             pump.start_batch()
             pump.switch_valve(from_port)
             try:
-                pump.move_absolute_counts(full_counts, velocity_counts=refill_vel, wait=False)
+                pump.move_absolute_counts(full_counts, velocity_counts=pull_vel, wait=False)
                 pump.execute(wait=True)
             except Exception:
                 pass
@@ -767,13 +784,17 @@ def _continuous_thread(idx, from_port, to_port, velocity_ml, cycles, ready=None)
             push_event("onCavroContinuousUpdate", idx, "running",
                        f"Cycle {n} done — {volume_so_far:.2f} mL total")
 
-        # Final flush: batch valve switch + push back to source at max speed
+        # Route a partial final syringe according to the selected operation:
+        # push returns it to FROM; pull completes delivery to TO.
         if pump.volume_ml > 0.001:
-            print(f"[Cavro C{idx+1}] final flush: {pump.volume_ml:.3f} mL back to port {from_port}")
-            pump.start_batch()
-            pump.switch_valve(from_port)
-            pump.move_absolute_counts(0, velocity_counts=max_vel, wait=False)
-            pump.execute(wait=True)
+            final_port = from_port if mode == "push" else to_port
+            final_vel = max_vel if mode == "push" else refill_vel
+            print(f"[Cavro C{idx+1}] final flush: {pump.volume_ml:.3f} mL "
+                  f"to port {final_port}")
+            _flush_to_port(
+                pump, final_port, final_vel,
+                f"[Cavro C{idx+1}] continuous {mode} final flush",
+            )
             print(f"[Cavro C{idx+1}] final flush done")
 
         status = "stopped" if _cont_stops[idx].is_set() else "complete"

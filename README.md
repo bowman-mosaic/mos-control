@@ -23,6 +23,17 @@ python control_server.py --port 8081
 
 Open `http://localhost:8081` in your browser, or use the launcher `.bat` from the project root for auto-launch with Edge/Chrome in app mode.
 
+### Windows app launcher
+
+Double-click `start_mosaic.bat`. It starts `control_server.py` in the
+background and opens `http://localhost:8081` in a dedicated Edge or Chrome app
+window. Closing that window gracefully shuts down the server and disconnects
+the connected hardware, just like stopping the server from the terminal.
+
+For desktop access, right-click `start_mosaic.bat`, choose **Show more
+options → Send to → Desktop (create shortcut)**, and rename the shortcut to
+`Mosaic Control Center`.
+
 ## Project Structure
 
 ```

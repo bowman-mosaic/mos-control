@@ -1,5 +1,9 @@
 """No-hardware tests for recorded TIFF viewer caching."""
 
+import json
+import shutil
+import subprocess
+
 import numpy as np
 import pytest
 
@@ -119,9 +123,10 @@ def test_preview_uses_local_pseudo_color_without_mutating_globals(
             encoded.append(image.copy())
             return True, np.array([1, 2, 3], dtype=np.uint8)
 
+
     monkeypatch.setattr(coolsnap, "_save_dir", str(tmp_path))
-    monkeypatch.setattr(coolsnap, "_get_capture_meta",
-                        lambda _path: ("green", None))
+    monkeypatch.setattr(coolsnap, "_get_capture_entry",
+                        lambda _path: {"color": "green"})
     monkeypatch.setattr(coolsnap, "_HAS_CV2", True)
     monkeypatch.setattr(coolsnap, "cv2", FakeCv2)
     monkeypatch.setattr(coolsnap, "_pseudo_color", (255, 0, 0))
@@ -188,6 +193,106 @@ def test_capture_listing_uses_tiff_metadata_only(tmp_path, monkeypatch):
     }
 
 
+def test_scale_metadata_applies_calibration_and_binning(monkeypatch):
+    monkeypatch.setattr(
+        coolsnap,
+        "_get_scale_config",
+        lambda: {
+            "objectives": {
+                "5": {
+                    "magnification": 20.0,
+                    "um_per_pixel_1x": 0.31,
+                    "calibrated": True,
+                }
+            }
+        },
+    )
+
+    scale = coolsnap._capture_scale_metadata(
+        objective=5, binning=2, z_nm=123456
+    )
+
+    assert scale == {
+        "objective_position": 5,
+        "objective_magnification": 20.0,
+        "binning": 2,
+        "z_nm": 123456,
+        "um_per_pixel": 0.62,
+        "um_per_pixel_1x": 0.31,
+        "mm_per_pixel": 0.00062,
+        "mm_per_pixel_1x": 0.00031,
+        "calibration_source": "calibrated",
+    }
+
+
+def test_objective_mm_per_pixel_is_copied_onto_the_image(monkeypatch):
+    monkeypatch.setattr(
+        coolsnap,
+        "_get_scale_config",
+        lambda: {
+            "objectives": {
+                "4": {
+                    "magnification": 10.0,
+                    "mm_per_pixel_1x": 0.0005,
+                    "calibrated": True,
+                }
+            }
+        },
+    )
+
+    scale = coolsnap._capture_scale_metadata(objective=4, binning=2, z_nm=10)
+
+    assert scale["mm_per_pixel_1x"] == 0.0005
+    assert scale["mm_per_pixel"] == 0.001
+    assert scale["um_per_pixel_1x"] == 0.5
+    assert scale["um_per_pixel"] == 1.0
+    assert scale["objective_position"] == 4
+    assert scale["calibration_source"] == "calibrated"
+
+
+def test_embedded_scale_metadata_is_available_without_experiment(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "scaled.tif"
+    scale = {
+        "objective_position": 4,
+        "objective_magnification": 10.0,
+        "binning": 1,
+        "um_per_pixel": 0.645,
+        "um_per_pixel_1x": 0.645,
+        "calibration_source": "nominal",
+    }
+    monkeypatch.setattr(coolsnap, "_experiment_meta", None)
+    monkeypatch.setattr(coolsnap, "_base_save_dir", str(tmp_path))
+    coolsnap._write_capture_tiff(
+        path, np.zeros((4, 5), dtype=np.uint16), scale=scale
+    )
+
+    assert coolsnap._get_capture_entry(path)["scale"] == scale
+    assert coolsnap.cam_list_captures()["files"][0]["scale"] == scale
+
+
+def test_preview_returns_scale_for_selected_stack_channel(tmp_path, monkeypatch):
+    path = tmp_path / "stack_1.tif"
+    channels = [
+        {"color": "none", "scale": {"um_per_pixel": 0.645, "binning": 1}},
+        {"color": "green", "scale": {"um_per_pixel": 0.3225, "binning": 1}},
+    ]
+    monkeypatch.setattr(coolsnap, "_experiment_meta", None)
+    monkeypatch.setattr(coolsnap, "_save_dir", str(tmp_path))
+    coolsnap._write_capture_tiff(
+        path,
+        np.arange(40, dtype=np.uint16).reshape(2, 4, 5),
+        colors=["none", "green"],
+        channels=channels,
+    )
+
+    result = coolsnap.cam_npy_preview(path.name, frame_idx=1)
+
+    assert result["scale"] == channels[1]["scale"]
+    assert result["channels"] == channels
+
+
 def test_explicit_pseudo_color_does_not_mutate_global_state():
     frame = np.arange(20, dtype=np.uint16).reshape(4, 5)
     previous = coolsnap._pseudo_color
@@ -202,3 +307,43 @@ def test_explicit_pseudo_color_does_not_mutate_global_state():
         assert coolsnap._pseudo_color == (255, 0, 0)
     finally:
         coolsnap._pseudo_color = previous
+
+
+def test_mp4_export_uses_macos_compatible_h264_yuv420p(tmp_path, monkeypatch):
+    ffprobe = shutil.which("ffprobe")
+    if not coolsnap._FFMPEG or not ffprobe:
+        pytest.skip("FFmpeg/ffprobe not installed")
+
+    path = tmp_path / "video.tif"
+    stack = np.linspace(
+        0, 65535, num=3 * 5 * 7, dtype=np.uint16
+    ).reshape(3, 5, 7)
+    tifffile.imwrite(path, stack, photometric="minisblack")
+    export_dir = tmp_path / "exports"
+
+    monkeypatch.setattr(coolsnap, "_save_dir", str(tmp_path))
+    monkeypatch.setattr(coolsnap, "_EXPORTS_DIR", str(export_dir))
+    monkeypatch.setattr(coolsnap, "_get_capture_meta",
+                        lambda _path: ("none", None))
+
+    result = coolsnap.cam_export_mp4(
+        path.name, fps=2, display_min=0, display_max=65535
+    )
+
+    assert result["ok"] is True
+    assert result["codec"] == "H.264"
+    assert result["pixel_format"] == "yuv420p"
+    probe = subprocess.run(
+        [
+            ffprobe, "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=codec_name,pix_fmt,width,height",
+            "-of", "json", str(export_dir / result["filename"]),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    stream = json.loads(probe.stdout)["streams"][0]
+    assert stream["codec_name"] == "h264"
+    assert stream["pix_fmt"] == "yuv420p"
+    assert (stream["width"], stream["height"]) == (8, 6)

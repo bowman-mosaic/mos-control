@@ -203,10 +203,21 @@ option { background:#fff; }
 .live-placeholder { color:var(--text3); font-size:14px; text-align:center; padding:32px; }
 .live-overlay { position:absolute; bottom:12px; left:50%; transform:translateX(-50%);
                 display:flex; gap:6px; background:rgba(0,0,0,.65); padding:6px 12px;
-                backdrop-filter:blur(8px); }
+                backdrop-filter:blur(8px); z-index:6; }
 .live-fps { position:absolute; top:10px; right:10px; font-size:12px; font-weight:600;
             color:var(--green); background:rgba(0,0,0,.6); padding:3px 10px;
-            display:none; }
+            display:none; z-index:6; }
+.live-cal-controls { display:none; }
+.setup-live-mount .live-cal-controls {
+  display:flex; align-items:center; gap:6px; flex-wrap:wrap; flex-shrink:0;
+  padding:6px 0 0; font-size:11px; color:var(--text2);
+}
+.live-cal-controls input[type=number] { width:78px; padding:3px 6px; }
+#liveScaleReadout { font-weight:700; color:var(--text); white-space:nowrap; }
+.live-calibration-overlay { position:absolute; display:none; z-index:5;
+                            cursor:crosshair; touch-action:none; }
+.live-calibration-overlay line { stroke:#22d3ee; stroke-width:2; }
+.live-calibration-overlay circle { fill:#22d3ee; stroke:#062f3a; stroke-width:1; }
 .live-quick { display:flex; gap:8px; align-items:center; padding:8px 0; flex-wrap:wrap; }
 .filmstrip { display:flex; gap:6px; padding:8px 0; overflow-x:auto; min-height:40px; }
 .filmstrip-item { flex-shrink:0; font-size:10px; color:var(--text2); padding:4px 10px;
@@ -220,7 +231,7 @@ option { background:#fff; }
 
 .tl-ruler-wrap { flex:1; min-height:0; display:flex; flex-direction:column;
                  border:1px solid var(--border);
-                 background:var(--surface); overflow:hidden; }
+                 background:var(--surface); overflow:hidden; user-select:none; }
 .tl-ruler-scroll { flex:1; overflow-x:auto; overflow-y:auto; position:relative; }
 .tl-ruler { position:relative; min-height:100%; overflow:hidden; }
 .tl-ruler-axis { position:sticky; top:0; z-index:5; height:28px;
@@ -240,9 +251,19 @@ option { background:#fff; }
 .tl-event { position:absolute; top:2px; height:36px; cursor:pointer;
             display:flex; align-items:center; padding:0 8px; font-size:10px; font-weight:600;
             color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-            user-select:none; min-width:20px; }
+            user-select:none; min-width:20px; z-index:1; }
 .tl-event:hover { opacity:.9; }
-.tl-event.selected { box-shadow:0 0 0 2px var(--accent); }
+.tl-lanes.has-selection .tl-event:not(.selected) { opacity:.42; filter:saturate(.7); }
+.tl-lanes.has-selection .tl-event:not(.selected):hover { opacity:.7; }
+.tl-event.selected { z-index:6;
+                     box-shadow:inset 0 0 0 3px #fff, 0 0 0 3px #1d4ed8, 0 2px 8px rgba(29,78,216,.4); }
+.tl-event.selected::after { content:''; position:absolute; inset:0; pointer-events:none;
+                            box-shadow:inset 0 0 0 3px rgba(255,255,255,.95);
+                            background:rgba(255,255,255,.16); }
+.tl-event.selected.running { box-shadow:inset 0 0 0 3px #fff, 0 0 0 3px var(--green); }
+.tl-event.selected .ev-label { text-shadow:0 0 6px rgba(0,0,0,.45); }
+.tl-marquee { position:fixed; z-index:90; pointer-events:none;
+              border:2px solid #1d4ed8; background:rgba(29,78,216,.18); }
 .tl-event.running { box-shadow:0 0 0 2px var(--green); }
 .tl-event .ev-label { overflow:hidden; text-overflow:ellipsis; flex:1; }
 .tl-event .ev-handle { position:absolute; top:0; width:6px; height:100%; cursor:ew-resize; }
@@ -291,11 +312,32 @@ option { background:#fff; }
 .npy-file .fname { font-weight:500; display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .npy-file .fmeta { font-size:9px; opacity:.7; }
 .npy-preview { flex:1; display:flex; flex-direction:column; align-items:center;
-               justify-content:center; padding:16px; gap:10px; min-width:0; }
-.npy-preview img { max-width:100%; max-height:calc(100vh - 220px); object-fit:contain;
-                   background:#000; }
+               justify-content:center; padding:16px; gap:10px; min-width:0;
+               position:relative; }
+.npy-stage { position:relative; display:inline-block; max-width:100%; line-height:0; }
+.npy-preview img { display:block; max-width:100%; max-height:calc(100vh - 220px);
+                   object-fit:contain; background:#000; }
 .npy-controls { display:flex; align-items:center; gap:8px; width:100%; max-width:600px; }
 .npy-controls input[type=range] { flex:1; }
+.npy-scale-overlay { position:absolute; right:14px; bottom:14px; display:none;
+                     z-index:4; color:#fff; pointer-events:none;
+                     filter:drop-shadow(0 1px 2px #000); }
+.npy-scale-label { display:block; font-size:11px; font-weight:600; line-height:15px;
+                   text-align:center; white-space:nowrap; }
+.npy-scale-line { display:block; height:4px; border:1px solid rgba(0,0,0,.75);
+                  background:#fff; }
+.npy-scale-controls { flex-wrap:wrap; font-size:11px; color:var(--text2); }
+.npy-scale-controls input[type=number] { width:82px; }
+.npy-calibration-overlay, .npy-measure-overlay {
+  position:absolute; left:0; top:0; width:100%; height:100%; display:none; z-index:5;
+  cursor:crosshair; touch-action:none; }
+.npy-calibration-overlay line { stroke:#22d3ee; stroke-width:2; }
+.npy-calibration-overlay circle { fill:#22d3ee; stroke:#062f3a; stroke-width:1; }
+.npy-measure-overlay line { stroke:#fbbf24; stroke-width:2; }
+.npy-measure-overlay circle { fill:#fbbf24; stroke:#1c1404; stroke-width:1; }
+.npy-measure-overlay text { fill:#fbbf24; font-size:12px; font-weight:700;
+                            text-anchor:middle; stroke:#111; stroke-width:3px;
+                            paint-order:stroke fill; }
 
 /* HISTOGRAM */
 .hist-wrap { position:relative; width:100%; max-width:600px; height:80px;
@@ -414,6 +456,54 @@ option { background:#fff; }
 .stage-sep { width:1px;height:48px;background:var(--border);margin:0 4px; }
 .stage-bar select { padding:2px 4px;font-size:11px;border:1px solid var(--border);background:var(--bg);border-radius:3px;min-width:120px; }
 
+/* Combined setup dashboard */
+.setup-dashboard { display:grid;grid-template-columns:minmax(680px,1.05fr) minmax(420px,0.95fr);gap:12px;height:calc(100vh - 126px);min-height:0; }
+.setup-left { display:flex;flex-direction:column;gap:10px;min-height:0;overflow-y:auto; }
+.setup-live-mount { min-width:0;min-height:0;display:flex;flex-direction:column; }
+.setup-live-mount .live-layout { height:100%;min-height:0; }
+.setup-live-mount .live-preview {
+  flex:1 1 auto;
+  width:100%;
+  min-height:0;
+  box-sizing:border-box;
+}
+.setup-live-mount .live-preview img {
+  width:auto;
+  height:auto;
+  max-width:100%;
+  max-height:100%;
+  object-fit:contain;
+}
+.setup-microscope-grid { display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px; }
+.setup-control-box { border:1px solid var(--border);padding:10px 12px; }
+.setup-control-box.wide { grid-column:1/-1; }
+.setup-control-box .section-label { margin-bottom:6px; }
+.setup-control-box .field:last-child { margin-bottom:0; }
+.setup-control-box select { flex:1;min-width:0; }
+.setup-pump-list { padding:6px 12px; }
+.setup-pump-row { display:grid;grid-template-columns:40px 86px 64px 64px 100px 52px 52px minmax(80px,1fr);gap:8px;align-items:end;padding:8px 0;border-bottom:1px solid var(--border); }
+.setup-pump-row:last-child { border-bottom:none; }
+.setup-pump-name { align-self:center;font-weight:700;color:var(--blue); }
+.setup-pump-field label { display:block;font-size:9px;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:2px; }
+.setup-pump-field input,.setup-pump-field select { width:100%;min-width:0;padding:4px 6px;font-size:11px; }
+.setup-pump-status { align-self:center;font-size:11px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.setup-pump-footer { display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;border-top:1px solid var(--border);background:var(--input-bg);font-size:10px;color:var(--text3); }
+
+/* Snap preview confirmation */
+.snap-overlay { position:fixed;inset:0;z-index:9500;display:none;align-items:center;justify-content:center;background:rgba(15,23,42,.48); }
+.snap-overlay.open { display:flex; }
+.snap-modal { width:min(920px,82vw);height:min(760px,82vh);display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);box-shadow:0 12px 36px rgba(15,23,42,.22); }
+.snap-modal-head { display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px;font-weight:700; }
+.snap-close { width:28px;height:28px;padding:0;border:0;background:transparent;color:var(--text2);font-size:20px;cursor:pointer; }
+.snap-preview-image { flex:1;min-height:0;margin:14px;background:#000;object-fit:contain;width:calc(100% - 28px); }
+.snap-meta { display:flex;justify-content:space-between;padding:0 14px 10px;color:var(--text3);font-size:10px; }
+.snap-actions { display:flex;align-items:center;justify-content:flex-end;gap:7px;padding:10px 14px;border-top:1px solid var(--border);background:var(--input-bg); }
+
+@media (max-width:1400px) {
+  .setup-dashboard { grid-template-columns:minmax(560px,1.1fr) minmax(360px,0.9fr); }
+  .setup-pump-row { grid-template-columns:36px 74px 54px 54px 88px 46px 46px minmax(64px,1fr);gap:6px; }
+}
+
 /* Per-panel mini picker */
 .module-cfg-picker { display:flex;align-items:center;gap:6px;padding:6px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:3px;margin-bottom:10px;max-width:480px;font-size:11px; }
 .module-cfg-picker label { font-weight:600;color:var(--text2);margin-right:4px; }
@@ -450,11 +540,12 @@ option { background:#fff; }
       <a class="nav-item active" data-panel="config" onclick="switchPanel('config')">Config</a>
       <!-- <a class="nav-item" data-panel="pumps" onclick="switchPanel('pumps')">Pumps</a> -->
       <a class="nav-item" data-panel="cavro" onclick="switchPanel('cavro')">Cavro</a>
-      <a class="nav-item" data-panel="scope-setup" onclick="switchPanel('scope-setup')">Setup</a>
+      <a class="nav-item" data-panel="scope-setup" onclick="switchPanel('scope-setup')">Scope</a>
       <a class="nav-item" data-panel="cam-setup" onclick="switchPanel('cam-setup')">Camera</a>
       <a class="nav-item" data-panel="live" onclick="switchPanel('live')">Live</a>
       <a class="nav-item" data-panel="timeline" onclick="switchPanel('timeline')">Timeline</a>
       <a class="nav-item" data-panel="viewer" onclick="switchPanel('viewer')">Viewer</a>
+      <a class="nav-item" data-panel="setup" onclick="switchPanel('setup')">Setup</a>
       <a class="nav-item" data-panel="obsbot" onclick="switchPanel('obsbot')">OBSBOT</a>
       <a class="nav-item" data-panel="log" onclick="switchPanel('log')">Log</a>
     </nav>
@@ -484,6 +575,128 @@ option { background:#fff; }
           <div class="section" style="padding:0">
             <div id="cfgModulesList"></div>
           </div>
+        </div>
+      </section>
+
+      <!-- ════════ COMBINED SETUP DASHBOARD ════════ -->
+      <section id="panel-setup" class="panel">
+        <div class="panel-title" style="margin-bottom:8px">Setup</div>
+        <div class="setup-dashboard">
+          <div class="setup-left">
+            <div class="card">
+              <div class="card-head"><span class="title">Microscope Controls</span>
+                <span class="badge" id="setupScopeBadge">Use Scope tab to connect</span></div>
+              <div class="setup-microscope-grid">
+                <div class="setup-control-box">
+                  <div class="section-label">Optics</div>
+                  <div class="field"><label>Objective</label>
+                    <select id="setupNosepiece" onchange="liveRefreshScaleReadout()">
+                      <option value="1">1 – 2×</option><option value="2">2 – 4×</option><option value="3">3 – 4× Fluor</option>
+                      <option value="4">4 – 10×</option><option value="5">5 – 20×</option><option value="6">6 – 40×</option>
+                    </select>
+                    <button class="btn btn-sm" onclick="setupSetNosepiece()">Set</button>
+                  </div>
+                  <div class="field"><label>Filter</label>
+                    <select id="setupFilter">
+                      <option value="1">1 – DIA</option><option value="2">2 – DAPI</option><option value="3">3 – GFP</option>
+                      <option value="4">4 – TxRed</option><option value="5">5 – ---</option><option value="6">6 – ---</option>
+                    </select>
+                    <button class="btn btn-sm" onclick="setupSetFilter()">Set</button>
+                  </div>
+                </div>
+
+                <div class="setup-control-box">
+                  <div class="section-label">Transmitted Light</div>
+                  <div class="field"><label>Shutter</label>
+                    <button class="btn green btn-sm" onclick="scopeShutterOpen()">Open</button>
+                    <button class="btn red btn-sm" onclick="scopeShutterClose()">Close</button>
+                    <span class="badge" id="setupShutterBadge">-</span>
+                  </div>
+                  <div class="field"><label>Top lamp</label>
+                    <button class="btn green btn-sm" onclick="scopeLampOn()">On</button>
+                    <button class="btn red btn-sm" onclick="scopeLampOff()">Off</button>
+                  </div>
+                  <div class="field"><label>Intensity</label>
+                    <input type="range" id="setupLampSlider" min="0" max="24" value="0"
+                           oninput="document.getElementById('setupLampVal').textContent=this.value"
+                           onchange="setupLampSetIntensity(this.value)" style="flex:1;accent-color:var(--amber)">
+                    <span id="setupLampVal" style="min-width:22px;text-align:right">0</span>
+                  </div>
+                </div>
+
+                <div class="setup-control-box wide">
+                  <div class="section-label">IntensiLight</div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                    <div class="field"><label>Epi shutter</label>
+                      <button class="btn green btn-sm" onclick="ilShutterOpen()">Open</button>
+                      <button class="btn red btn-sm" onclick="ilShutterClose()">Close</button>
+                      <span class="badge" id="setupIntensiBadge">-</span>
+                    </div>
+                    <div class="field"><label>ND filter</label>
+                      <select id="setupIlNdSelect">
+                        <option value="1">ND1 (100%)</option><option value="2">ND2 (50%)</option>
+                        <option value="3">ND4 (25%)</option><option value="4">ND8 (12.5%)</option>
+                        <option value="5">ND16 (6.25%)</option><option value="6">ND32 (3%)</option>
+                      </select>
+                      <button class="btn btn-sm" onclick="setupIlNdSet()">Set</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-head"><span class="title">Cavro Continuous Control</span>
+                <span style="font-size:9px;color:var(--text3)">Speed in µL/min · reset uses fixed refill rate</span></div>
+              <div class="setup-pump-list">
+                <div class="setup-pump-row">
+                  <div class="setup-pump-name">C0</div>
+                  <div class="setup-pump-field"><label>Mode</label><select id="setupCavroMode0"><option value="push">PUSH</option><option value="pull">PULL</option></select></div>
+                  <div class="setup-pump-field"><label>From</label><select id="setupCavroFrom0"><option>1</option><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option></select></div>
+                  <div class="setup-pump-field"><label>To</label><select id="setupCavroTo0"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option></select></div>
+                  <div class="setup-pump-field"><label>Speed</label><input type="number" id="setupCavroRate0" value="5000" min="1" step="100"></div>
+                  <button class="btn green btn-sm" id="setupCavroOn0" onclick="setupCavroStart(0)">ON</button>
+                  <button class="btn red btn-sm" id="setupCavroOff0" onclick="setupCavroStop(0)" disabled>OFF</button>
+                  <div class="setup-pump-status" id="setupCavroStatus0">Ready</div>
+                </div>
+                <div class="setup-pump-row">
+                  <div class="setup-pump-name">C1</div>
+                  <div class="setup-pump-field"><label>Mode</label><select id="setupCavroMode1"><option value="push">PUSH</option><option value="pull">PULL</option></select></div>
+                  <div class="setup-pump-field"><label>From</label><select id="setupCavroFrom1"><option selected>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></div>
+                  <div class="setup-pump-field"><label>To</label><select id="setupCavroTo1"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option></select></div>
+                  <div class="setup-pump-field"><label>Speed</label><input type="number" id="setupCavroRate1" value="2500" min="1" step="100"></div>
+                  <button class="btn green btn-sm" id="setupCavroOn1" onclick="setupCavroStart(1)">ON</button>
+                  <button class="btn red btn-sm" id="setupCavroOff1" onclick="setupCavroStop(1)" disabled>OFF</button>
+                  <div class="setup-pump-status" id="setupCavroStatus1">Ready</div>
+                </div>
+                <div class="setup-pump-row">
+                  <div class="setup-pump-name">C2</div>
+                  <div class="setup-pump-field"><label>Mode</label><select id="setupCavroMode2"><option value="push">PUSH</option><option value="pull">PULL</option></select></div>
+                  <div class="setup-pump-field"><label>From</label><select id="setupCavroFrom2"><option>1</option><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option></select></div>
+                  <div class="setup-pump-field"><label>To</label><select id="setupCavroTo2"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></div>
+                  <div class="setup-pump-field"><label>Speed</label><input type="number" id="setupCavroRate2" value="1000" min="1" step="100"></div>
+                  <button class="btn green btn-sm" id="setupCavroOn2" onclick="setupCavroStart(2)">ON</button>
+                  <button class="btn red btn-sm" id="setupCavroOff2" onclick="setupCavroStop(2)" disabled>OFF</button>
+                  <div class="setup-pump-status" id="setupCavroStatus2">Ready</div>
+                </div>
+                <div class="setup-pump-row">
+                  <div class="setup-pump-name">C3</div>
+                  <div class="setup-pump-field"><label>Mode</label><select id="setupCavroMode3"><option value="push">PUSH</option><option value="pull">PULL</option></select></div>
+                  <div class="setup-pump-field"><label>From</label><select id="setupCavroFrom3"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></div>
+                  <div class="setup-pump-field"><label>To</label><select id="setupCavroTo3"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option></select></div>
+                  <div class="setup-pump-field"><label>Speed</label><input type="number" id="setupCavroRate3" value="500" min="1" step="100"></div>
+                  <button class="btn green btn-sm" id="setupCavroOn3" onclick="setupCavroStart(3)">ON</button>
+                  <button class="btn red btn-sm" id="setupCavroOff3" onclick="setupCavroStop(3)" disabled>OFF</button>
+                  <div class="setup-pump-status" id="setupCavroStatus3">Ready</div>
+                </div>
+              </div>
+              <div class="setup-pump-footer">
+                <span>PUSH: refill FROM → flow TO · PULL: flow FROM → reset TO</span>
+                <button class="btn red btn-sm" onclick="cavroStopAll()">STOP ALL</button>
+              </div>
+            </div>
+          </div>
+          <div class="setup-live-mount" id="setupLiveMount"></div>
         </div>
       </section>
 
@@ -768,17 +981,32 @@ option { background:#fff; }
 
       <!-- ════════ LIVE VIEW ════════ -->
       <section id="panel-live" class="panel">
+        <div id="livePanelMount">
         <div class="live-layout">
           <div class="live-preview" id="livePreviewArea">
             <img id="scopePreview" alt="preview">
+            <svg class="live-calibration-overlay" id="liveCalOverlay">
+              <line id="liveCalLine" visibility="hidden"></line>
+              <circle id="liveCalStart" r="4" visibility="hidden"></circle>
+              <circle id="liveCalEnd" r="4" visibility="hidden"></circle>
+            </svg>
             <div class="live-placeholder" id="scopePlaceholder">
               Connect camera and click <strong>Live</strong>
             </div>
             <div class="live-fps" id="scopeFps"></div>
             <div class="live-overlay">
               <button class="btn btn-sm" id="scopeLiveBtn" onclick="scopeToggleLive()">Live</button>
-              <button class="btn btn-sm" onclick="scopeSnapSave()">Save</button>
+              <button class="btn btn-sm" onclick="scopeSnap()">Snap</button>
             </div>
+          </div>
+          <div class="live-cal-controls" id="liveCalControls">
+            <span id="liveScaleReadout" title="Sample-plane scale at the current objective and binning">— mm/px</span>
+            <label for="liveCalKnownMm">Known</label>
+            <input type="number" id="liveCalKnownMm" min="0.000001" step="0.01" value="0.1"
+                   title="Physical distance between the two points">
+            <span>mm</span>
+            <button class="btn btn-sm" id="liveCalBtn" onclick="liveStartCalibration()">Calibrate</button>
+            <span id="liveCalStatus"></span>
           </div>
           <div class="live-quick">
             <button class="btn btn-sm" id="liveShutterBtn" onclick="liveToggleShutter()">Shutter: -</button>
@@ -841,8 +1069,18 @@ option { background:#fff; }
             <label style="margin-left:4px">steps</label>
             <input type="number" id="liveAfSteps" value="11" step="1" min="3" title="Number of Z positions sampled" style="width:42px">
             <button class="btn btn-sm" onclick="liveAutoFocus()" id="liveAfBtn">Auto Focus</button>
+
+            <div class="stage-sep"></div>
+
+            <label title="How much of each field is shared with the next tile">Overlap</label>
+            <input type="number" id="liveMosaicOverlap" value="10" min="0" max="90" step="1"
+                   title="Percent of the field shared with the neighboring tile" style="width:42px">
+            <span style="font-size:10px;color:var(--text3)">%</span>
+            <button class="btn btn-sm accent" id="liveMosaicBtn" onclick="liveMosaic3x3()"
+                    title="Save nine fields in a 3×3 grid centered on this position">3×3 Mosaic</button>
           </div>
           <div id="liveAfStatus" style="font-size:11px;color:var(--text3);padding:0 4px 4px;display:none"></div>
+          <div id="liveMosaicStatus" style="font-size:11px;color:var(--text3);padding:0 4px 4px;display:none"></div>
           <div id="liveMarkerList" class="marker-list" style="display:none;margin:0 0 6px 0;padding:4px 0"></div>
           <div class="live-quick" style="gap:8px;align-items:center">
             <span style="font-size:10px;color:var(--text3)">Brightness</span>
@@ -884,6 +1122,7 @@ option { background:#fff; }
             <div style="color:var(--text3);font-size:11px;padding:4px">No captures yet</div>
           </div>
         </div>
+        </div>
       </section>
 
       <!-- ════════ TIMELINE ════════ -->
@@ -916,6 +1155,10 @@ option { background:#fff; }
               <option value="2">Cavro 2</option><option value="3">Cavro 3</option>
             </select>
             <button class="btn btn-sm" onclick="tlAddCavroLane()">+ Cavro Lane</button>
+            <div class="sep"></div>
+            <button class="btn btn-sm" onclick="tlCutSelected()" title="Cut (Ctrl+X)">Cut</button>
+            <button class="btn btn-sm" onclick="tlCopySelected()" title="Copy (Ctrl+C)">Copy</button>
+            <button class="btn btn-sm" onclick="tlPasteClipboard()" title="Paste (Ctrl+V)">Paste</button>
             <div class="sep"></div>
             <button class="btn green btn-sm" id="tlPlayBtn" onclick="tlPlay()">&#9654; Play</button>
             <button class="btn red btn-sm" id="tlStopBtn" onclick="tlStop()" disabled>&#9632; Stop</button>
@@ -1004,7 +1247,24 @@ option { background:#fff; }
             <div style="padding:8px 12px;font-size:11px;color:var(--text3)">No captures yet</div>
           </div>
           <div class="npy-preview">
-            <img id="npyImage" alt="preview" style="display:none">
+            <div class="npy-stage" id="npyStage">
+              <img id="npyImage" alt="preview" style="display:none">
+              <div class="npy-scale-overlay" id="npyScaleOverlay">
+                <span class="npy-scale-label" id="npyScaleLabel"></span>
+                <span class="npy-scale-line" id="npyScaleLine"></span>
+              </div>
+              <svg class="npy-calibration-overlay" id="npyCalibrationOverlay">
+                <line id="npyCalibrationLine" visibility="hidden"></line>
+                <circle id="npyCalibrationStart" r="4" visibility="hidden"></circle>
+                <circle id="npyCalibrationEnd" r="4" visibility="hidden"></circle>
+              </svg>
+              <svg class="npy-measure-overlay" id="npyMeasureOverlay">
+                <line id="npyMeasureLine" visibility="hidden"></line>
+                <circle id="npyMeasureStart" r="4" visibility="hidden"></circle>
+                <circle id="npyMeasureEnd" r="4" visibility="hidden"></circle>
+                <text id="npyMeasureLabel" visibility="hidden"></text>
+              </svg>
+            </div>
             <div id="npyPlaceholder" style="font-size:12px;color:var(--text3)">Select a file to preview</div>
 
             <!-- Frame slider row (video + timelapse) -->
@@ -1086,6 +1346,22 @@ option { background:#fff; }
                        oninput="npyMergeChanged()">
                 <span id="npyMergeGammaVal" style="font-size:11px;min-width:32px;text-align:right">1.0</span>
               </div>
+            </div>
+            <div class="npy-controls npy-scale-controls" id="npyScaleControls" style="display:none">
+              <label style="display:flex;align-items:center;gap:4px">
+                <input type="checkbox" id="npyScaleVisible" checked onchange="npyUpdateScaleBar()">
+                Scale bar
+              </label>
+              <span>Known length</span>
+              <input type="number" id="npyCalibrationKnownUm" min="0.001" step="0.1"
+                     value="100">
+              <span>µm</span>
+              <button class="btn btn-sm" id="npyCalibrationBtn"
+                      onclick="npyStartCalibration()">Calibrate</button>
+              <button class="btn btn-sm" id="npyMeasureBtn"
+                      onclick="npyStartMeasure()">Measure</button>
+              <span id="npyMeasureReadout" style="font-weight:700;color:var(--text)"></span>
+              <span id="npyScaleStatus" style="color:var(--text3)"></span>
             </div>
             <div id="npyFileInfo" style="font-size:11px;color:var(--text3)"></div>
             <!-- Export controls -->
@@ -1253,6 +1529,24 @@ option { background:#fff; }
   </div>
 </div>
 
+<div class="snap-overlay" id="snapOverlay" role="dialog" aria-modal="true" aria-labelledby="snapModalTitle">
+  <div class="snap-modal">
+    <div class="snap-modal-head">
+      <span id="snapModalTitle">Snap Preview</span>
+      <button class="snap-close" onclick="snapDiscard()" title="Close without saving">×</button>
+    </div>
+    <img class="snap-preview-image" id="snapModalImage" alt="Captured image preview">
+    <div class="snap-meta">
+      <span id="snapModalMeta"></span>
+      <span id="snapModalState">Not saved</span>
+    </div>
+    <div class="snap-actions">
+      <button class="btn" onclick="snapDiscard()">Close Without Saving</button>
+      <button class="btn accent" id="snapSaveBtn" onclick="snapSavePending()">Save TIFF</button>
+    </div>
+  </div>
+</div>
+
 <div id="toasts"></div>
 
 <script>
@@ -1271,6 +1565,11 @@ let scopeTiConnected = false;
 let scopeCaptures = [];
 let scopeLiveActive = false;
 let _liveWs = null;
+let _liveCalActive = false;
+let _liveCalStart = null;
+let _liveCalDragging = false;
+let _liveCalObjective = null;
+let _liveScaleConfig = null;
 let _fpsPoller = null;
 let _shutterOpen = false;
 let _lampOn = false;
@@ -1299,18 +1598,28 @@ function now(){ return new Date().toLocaleTimeString("en-GB",{hour12:false}); }
    NAVIGATION
    ═══════════════════════════════════════════════════════════════════════════ */
 function switchPanel(name) {
+  const liveLayout = document.querySelector(".live-layout");
+  const liveTarget = name === "setup"
+    ? document.getElementById("setupLiveMount")
+    : document.getElementById("livePanelMount");
+  if((name === "setup" || name === "live") &&
+     liveLayout && liveTarget && liveLayout.parentElement !== liveTarget) {
+    liveTarget.appendChild(liveLayout);
+  }
   document.querySelectorAll(".nav-item").forEach(n=>
     n.classList.toggle("active", n.dataset.panel===name));
   document.querySelectorAll(".panel").forEach(p=>
     p.classList.toggle("active", p.id==="panel-"+name));
+  if(name !== 'setup' && _liveCalActive) liveStopCalibration();
   if(name === 'viewer') npyRefreshList();
   if(name === 'config') renderConfigPanel();
-  if(name === 'live') {
+  if(name === 'live' || name === 'setup') {
     refreshLiveMarkerDropdown();
     liveStartStagePolling();
   } else {
     liveStopStagePolling();
   }
+  if(name === 'setup') setupRefreshControls();
 }
 
 function updateIndicators() {
@@ -1609,6 +1918,7 @@ async function cavroConnectBus() {
   toast("Cavro bus connected on "+port,"success");
   logMsg("Cavro bus connected on "+port,"sys");
   cavroRefreshAllStatus();
+  setupCavroRefreshAll();
 }
 
 async function cavroDisconnectBus() {
@@ -1620,16 +1930,19 @@ async function cavroDisconnectBus() {
   document.getElementById("cavroBusDisc").disabled=true;
   for(let i=0;i<NUM_CAVRO;i++) document.getElementById("cStatus"+i).textContent="—";
   updateIndicators();
+  setupCavroRefreshAll();
   logMsg("Cavro bus disconnected","sys");
 }
 
 async function cavroStopAll() {
   toast("Stopping all pumps...");
   logMsg("Cavro: stopping all pumps","sys");
+  for(let i=0;i<NUM_CAVRO;i++) setupCavroSetRunning(i, true, "Stopping…");
   await api('cavro_stop_all');
   toast("All pumps stopped","success");
   logMsg("Cavro: all pumps stopped","sys");
   cavroRefreshAllStatus();
+  setTimeout(setupCavroRefreshAll, 500);
 }
 
 /* ── Homing ───────────────────────────────────────────────────────────────── */
@@ -1665,9 +1978,76 @@ async function cavroRefreshAllStatus() {
   for(let i=0;i<NUM_CAVRO;i++) cavroRefreshStatus(i);
 }
 
+function setupCavroSetRunning(idx, running, text, available=true) {
+  const on = document.getElementById("setupCavroOn"+idx);
+  const off = document.getElementById("setupCavroOff"+idx);
+  const status = document.getElementById("setupCavroStatus"+idx);
+  if(on) on.disabled = running || !available;
+  if(off) off.disabled = !running || !available;
+  if(status && text) status.textContent = text;
+}
+
+async function setupCavroStart(idx) {
+  if(!cavroBusConnected) { toast("Connect the Cavro bus first","error"); return; }
+  const mode = document.getElementById("setupCavroMode"+idx).value;
+  const fromPort = parseInt(document.getElementById("setupCavroFrom"+idx).value);
+  const toPort = parseInt(document.getElementById("setupCavroTo"+idx).value);
+  const rateUlMin = parseFloat(document.getElementById("setupCavroRate"+idx).value);
+  if(!Number.isFinite(rateUlMin) || rateUlMin <= 0) {
+    toast("Enter a speed greater than zero","error");
+    return;
+  }
+  if(fromPort === toPort) {
+    toast("FROM and TO ports must be different","error");
+    return;
+  }
+  setupCavroSetRunning(idx, true, "Starting…");
+  const rateMlSec = rateUlMin / 60000;
+  const r = await api(
+    'cavro_continuous_start', idx, fromPort, toPort, rateMlSec, 0, mode
+  );
+  if(r.error) {
+    setupCavroSetRunning(idx, false, "Error");
+    toast("C"+idx+": "+r.error,"error");
+    logMsg("Cavro C"+idx+" start: "+r.error,"error");
+    return;
+  }
+  setupCavroSetRunning(idx, true, mode.toUpperCase()+" running");
+  logMsg(`Cavro C${idx}: ${mode.toUpperCase()} ${fromPort}→${toPort} at ${rateUlMin} µL/min`,"sys");
+}
+
+async function setupCavroStop(idx) {
+  setupCavroSetRunning(idx, true, "Stopping…");
+  const r = await api('cavro_continuous_stop', idx);
+  if(r.error) {
+    setupCavroSetRunning(idx, true, "Stop error");
+    toast("C"+idx+": "+r.error,"error");
+    return;
+  }
+  setupCavroSetRunning(idx, false, "Ready");
+}
+
+async function setupCavroRefreshAll() {
+  for(let i=0;i<NUM_CAVRO;i++) {
+    if(!cavroBusConnected) {
+      setupCavroSetRunning(i, false, "Bus offline", false);
+      continue;
+    }
+    try {
+      const running = await api('cavro_continuous_is_running', i);
+      setupCavroSetRunning(i, running === true, running === true ? "Running" : "Ready");
+    } catch(e) {
+      setupCavroSetRunning(i, false, "Unknown");
+    }
+  }
+}
+
 /* ── Cavro event handlers (for timeline-triggered operations) ─────────────── */
 onEvent("onCavroContinuousUpdate", function(idx, status, msg) {
   logMsg("Cavro C"+idx+": "+msg, status==="error"?"error":"sys");
+  const running = status === "started" || status === "running";
+  setupCavroSetRunning(idx, running, status === "error" ? "Error" :
+    (running ? msg : "Ready"));
 });
 onEvent("onCavroCoordinatedUpdate", function(status, msg) {
   logMsg("Cavro coord: "+msg, status==="error"?"error":"sys");
@@ -1691,6 +2071,7 @@ async function scopeTiConnect() {
   document.getElementById("scopeTiConn").disabled=true;
   document.getElementById("scopeTiDisc").disabled=false;
   updateIndicators();
+  updateSetupScopeBadge();
   toast("Nikon Ti connected","success");
   logMsg("Nikon Ti connected","sys");
   scopeRefreshTi();
@@ -1703,7 +2084,14 @@ async function scopeTiDisconnect() {
   document.getElementById("scopeTiConn").disabled=false;
   document.getElementById("scopeTiDisc").disabled=true;
   updateIndicators();
+  updateSetupScopeBadge();
   logMsg("Nikon Ti disconnected","sys");
+}
+function updateSetupScopeBadge() {
+  const badge = document.getElementById("setupScopeBadge");
+  if(!badge) return;
+  badge.className = scopeTiConnected ? "badge on" : "badge";
+  badge.textContent = scopeTiConnected ? "Nikon Ti Online" : "Use Scope tab to connect";
 }
 
 async function scopeShutterOpen() {
@@ -1722,6 +2110,11 @@ function updateShutterBadge() {
   document.getElementById("scopeShutterBadge").className = _shutterOpen ? "badge on" : "badge";
   document.getElementById("scopeShutterBadge").textContent = _shutterOpen ? "Open" : "Closed";
   document.getElementById("liveShutterBtn").textContent = "Shutter: " + (_shutterOpen ? "Open" : "Closed");
+  const setupBadge = document.getElementById("setupShutterBadge");
+  if(setupBadge) {
+    setupBadge.className = _shutterOpen ? "badge on" : "badge";
+    setupBadge.textContent = _shutterOpen ? "Open" : "Closed";
+  }
 }
 
 async function scopeLampOn() {
@@ -1745,6 +2138,11 @@ async function scopeLampSetIntensity(v) {
   if(!scopeTiConnected) return;
   await api('ti_dia_lamp_set_intensity', parseInt(v));
 }
+async function setupLampSetIntensity(v) {
+  document.getElementById("scopeLampSlider").value = v;
+  document.getElementById("scopeLampVal").textContent = v;
+  await scopeLampSetIntensity(v);
+}
 
 /* Intensilight (serial) */
 async function ilConnect() {
@@ -1758,6 +2156,7 @@ async function ilConnect() {
   document.getElementById("ilConn").disabled=true;
   document.getElementById("ilDisc").disabled=false;
   updateIndicators();
+  updateIntensiBadge();
   toast("Intensilight connected (v"+r.version+")","success");
   logMsg("Intensilight connected on "+port,"sys");
   ilRefresh();
@@ -1806,11 +2205,24 @@ async function ilRefresh() {
   }
   if(s.nd_position != null) {
     document.getElementById("ilNdSelect").value = s.nd_position;
+    const setupNd = document.getElementById("setupIlNdSelect");
+    if(setupNd) setupNd.value = s.nd_position;
     document.getElementById("ilNdState").textContent = s.nd_label;
   }
 }
 function updateIntensiBadge() {
   document.getElementById("liveIntensiBtn").textContent = "IL: " + (_intensiOn ? "Open" : "Closed");
+  const setupBadge = document.getElementById("setupIntensiBadge");
+  if(setupBadge) {
+    setupBadge.className = _intensiOn ? "badge on" : "badge";
+    setupBadge.textContent = !_ilConnected ? "Offline" : (_intensiOn ? "Open" : "Closed");
+  }
+}
+
+async function setupIlNdSet() {
+  document.getElementById("ilNdSelect").value =
+    document.getElementById("setupIlNdSelect").value;
+  await ilNdSet();
 }
 
 async function scopeSetNosepiece() {
@@ -1835,15 +2247,30 @@ async function scopeRefreshOptics() {
   const n = await api('ti_nosepiece_get');
   if(n.ok) {
     document.getElementById("scopeNosepiece").value = n.value;
+    const setupNosepiece = document.getElementById("setupNosepiece");
+    if(setupNosepiece) setupNosepiece.value = n.value;
     const _objNames = {1:'2×',2:'4×',3:'4× Fluor',4:'10×',5:'20×',6:'40×'};
     document.getElementById("scopeNosepieceCur").textContent = _objNames[n.value] || ("pos "+n.value);
   }
   const f = await api('ti_filter_get');
   if(f.ok) {
     document.getElementById("scopeFilter").value = f.value;
+    const setupFilter = document.getElementById("setupFilter");
+    if(setupFilter) setupFilter.value = f.value;
     const _filtNames = {1:'DIA',2:'DAPI',3:'GFP',4:'TxRed',5:'---',6:'---'};
     document.getElementById("scopeFilterCur").textContent = _filtNames[f.value] || ("pos "+f.value);
   }
+  liveRefreshScaleReadout();
+}
+async function setupSetNosepiece() {
+  document.getElementById("scopeNosepiece").value =
+    document.getElementById("setupNosepiece").value;
+  await scopeSetNosepiece();
+}
+async function setupSetFilter() {
+  document.getElementById("scopeFilter").value =
+    document.getElementById("setupFilter").value;
+  await scopeSetFilter();
 }
 async function scopeZRefresh() {
   if(!scopeTiConnected) return;
@@ -1879,9 +2306,325 @@ async function scopeRefreshTi() {
     if(l.intensity!=null){
       document.getElementById("scopeLampSlider").value = l.intensity;
       document.getElementById("scopeLampVal").textContent = l.intensity;
+      const setupSlider = document.getElementById("setupLampSlider");
+      const setupValue = document.getElementById("setupLampVal");
+      if(setupSlider) setupSlider.value = l.intensity;
+      if(setupValue) setupValue.textContent = l.intensity;
     }
   }
 }
+
+async function setupRefreshControls() {
+  updateSetupScopeBadge();
+  updateShutterBadge();
+  updateLampBadge();
+  updateIntensiBadge();
+  if(scopeTiConnected) await scopeRefreshTi();
+  if(_ilConnected) await ilRefresh();
+  await setupCavroRefreshAll();
+  if(!scopeTiConnected) liveRefreshScaleReadout();
+}
+
+/* ── Setup scale calibration (mm/px) ─────────────────────────────────────── */
+
+const _LIVE_OBJECTIVE_NAMES = {
+  1:"2×", 2:"4×", 3:"4× Fluor", 4:"10×", 5:"20×", 6:"40×"
+};
+
+function _liveFormatMmPerPx(mm) {
+  if(!(mm > 0) || !Number.isFinite(mm)) return "—";
+  return String(parseFloat(mm.toPrecision(4)));
+}
+
+function _liveObjectiveMm1x(obj) {
+  const mm = parseFloat(obj && obj.mm_per_pixel_1x);
+  if(mm > 0) return mm;
+  const um = parseFloat(obj && obj.um_per_pixel_1x);
+  return um > 0 ? um / 1000 : NaN;
+}
+
+function _liveRefreshObjectiveLabels() {
+  const objectives = _liveScaleConfig && _liveScaleConfig.objectives;
+  ["setupNosepiece", "scopeNosepiece"].forEach(id => {
+    const sel = document.getElementById(id);
+    if(!sel) return;
+    for(const opt of sel.options) {
+      const pos = parseInt(opt.value);
+      const name = _LIVE_OBJECTIVE_NAMES[pos] || ("pos " + pos);
+      const mm = _liveObjectiveMm1x(objectives && objectives[String(pos)]);
+      const scale = mm > 0 ? ` · ${_liveFormatMmPerPx(mm)} mm/px` : "";
+      opt.textContent = `${pos} – ${name}${scale}`;
+    }
+  });
+}
+
+async function liveRefreshScaleReadout() {
+  const readout = document.getElementById("liveScaleReadout");
+  if(!readout) return;
+  if(!_liveScaleConfig) {
+    const r = await api("cam_get_scale_calibration");
+    if(r && !r.error) _liveScaleConfig = r;
+  }
+  _liveRefreshObjectiveLabels();
+  const pos = parseInt(document.getElementById("setupNosepiece").value);
+  const obj = _liveScaleConfig && _liveScaleConfig.objectives
+    ? _liveScaleConfig.objectives[String(pos)] : null;
+  let binning = parseInt(document.getElementById("scopeBinning").value) || 1;
+  if(scopeCamConnected) {
+    const b = await api("cam_get_binning");
+    if(typeof b === "number" && b > 0) {
+      binning = b;
+      const binSelect = document.getElementById("scopeBinning");
+      if(binSelect && binSelect.value !== String(b)) binSelect.value = String(b);
+    }
+  }
+  const mm1x = _liveObjectiveMm1x(obj);
+  const name = _LIVE_OBJECTIVE_NAMES[pos] || ("pos " + pos);
+  const cur = document.getElementById("scopeNosepieceCur");
+  if(!(mm1x > 0)) {
+    readout.textContent = "— mm/px";
+    if(cur) cur.textContent = name;
+    return;
+  }
+  const source = obj.calibrated ? "calibrated" : "nominal";
+  const imageMm = mm1x * binning;
+  const binText = binning === 1
+    ? ""
+    : ` · image ${_liveFormatMmPerPx(imageMm)} mm/px at ${binning}×${binning}`;
+  readout.textContent =
+    `${_liveFormatMmPerPx(mm1x)} mm/px · ${name} · ${source}${binText}`;
+  readout.title = "mm/px belongs to this objective at 1×1 binning";
+  if(cur) cur.textContent = `${name} · ${_liveFormatMmPerPx(mm1x)} mm/px`;
+}
+
+async function _liveMeasureGeometry() {
+  const img = document.getElementById("scopePreview");
+  let pixelWidth = img.naturalWidth || 0;
+  let binning = parseInt(document.getElementById("scopeBinning").value) || 1;
+  if(scopeCamConnected) {
+    const info = await api("cam_info");
+    const b = await api("cam_get_binning");
+    if(typeof b === "number" && b > 0) binning = b;
+    const sensorW = info && info.sensor_size && info.sensor_size[0];
+    if(sensorW > 0 && binning > 0)
+      pixelWidth = Math.floor(sensorW / binning);
+  }
+  return {pixelWidth, binning};
+}
+
+function _liveFitCalOverlay() {
+  if(!_liveCalActive) return;
+  const overlay = document.getElementById("liveCalOverlay");
+  const img = document.getElementById("scopePreview");
+  const preview = document.getElementById("livePreviewArea");
+  const imgRect = img.getBoundingClientRect();
+  const previewRect = preview.getBoundingClientRect();
+  if(imgRect.width < 2 || imgRect.height < 2) return;
+  overlay.style.left = `${imgRect.left - previewRect.left}px`;
+  overlay.style.top = `${imgRect.top - previewRect.top}px`;
+  overlay.style.width = `${imgRect.width}px`;
+  overlay.style.height = `${imgRect.height}px`;
+  overlay.setAttribute("viewBox", `0 0 ${imgRect.width} ${imgRect.height}`);
+}
+
+function _liveHideCalLine() {
+  ["liveCalLine", "liveCalStart", "liveCalEnd"].forEach(id => {
+    const el = document.getElementById(id);
+    if(el) el.setAttribute("visibility", "hidden");
+  });
+}
+
+function _liveDrawCalLine(startPoint, endPoint) {
+  const line = document.getElementById("liveCalLine");
+  const start = document.getElementById("liveCalStart");
+  const end = document.getElementById("liveCalEnd");
+  line.setAttribute("x1", startPoint.x);
+  line.setAttribute("y1", startPoint.y);
+  line.setAttribute("x2", endPoint.x);
+  line.setAttribute("y2", endPoint.y);
+  start.setAttribute("cx", startPoint.x);
+  start.setAttribute("cy", startPoint.y);
+  end.setAttribute("cx", endPoint.x);
+  end.setAttribute("cy", endPoint.y);
+  line.setAttribute("visibility", "visible");
+  start.setAttribute("visibility", "visible");
+  end.setAttribute("visibility", "visible");
+}
+
+function _liveCalPoint(event) {
+  const rect = document.getElementById("liveCalOverlay").getBoundingClientRect();
+  return {
+    x: Math.max(0, Math.min(rect.width, event.clientX - rect.left)),
+    y: Math.max(0, Math.min(rect.height, event.clientY - rect.top)),
+  };
+}
+
+function liveStopCalibration() {
+  _liveCalActive = false;
+  _liveCalStart = null;
+  _liveCalDragging = false;
+  _liveCalObjective = null;
+  const overlay = document.getElementById("liveCalOverlay");
+  if(overlay) overlay.style.display = "none";
+  _liveHideCalLine();
+  const btn = document.getElementById("liveCalBtn");
+  if(btn) {
+    btn.textContent = "Calibrate";
+    btn.classList.remove("accent");
+  }
+  const status = document.getElementById("liveCalStatus");
+  if(status) status.textContent = "";
+}
+
+async function liveStartCalibration() {
+  if(_liveCalActive) {
+    liveStopCalibration();
+    return;
+  }
+  const img = document.getElementById("scopePreview");
+  if(!img || img.style.display === "none" || !(img.naturalWidth > 0)) {
+    toast("Start Live or take a Snap first", "error");
+    return;
+  }
+  const knownMm = parseFloat(document.getElementById("liveCalKnownMm").value);
+  if(!(knownMm > 0)) {
+    toast("Enter the known distance in mm first", "error");
+    return;
+  }
+  if(scopeTiConnected) await scopeRefreshOptics();
+  const pos = parseInt(document.getElementById("setupNosepiece").value);
+  if(!(pos >= 1)) {
+    toast("Choose an objective first", "error");
+    return;
+  }
+  _liveCalObjective = pos;
+  _liveCalActive = true;
+  _liveCalStart = null;
+  _liveCalDragging = false;
+  _liveHideCalLine();
+  _liveFitCalOverlay();
+  document.getElementById("liveCalOverlay").style.display = "block";
+  const btn = document.getElementById("liveCalBtn");
+  btn.textContent = "Cancel";
+  btn.classList.add("accent");
+  const name = _LIVE_OBJECTIVE_NAMES[pos] || ("pos " + pos);
+  document.getElementById("liveCalStatus").textContent =
+    `Click two points ${knownMm} mm apart · ${name}`;
+}
+
+let _liveCalSaving = false;
+async function _liveFinishCalibration(endPoint) {
+  const start = _liveCalStart;
+  if(_liveCalSaving || !_liveCalActive || !start) return;
+  const overlay = document.getElementById("liveCalOverlay");
+  const overlayWidth = overlay.getBoundingClientRect().width;
+  const displayPixels = Math.hypot(endPoint.x - start.x, endPoint.y - start.y);
+  if(displayPixels < 8 || !(overlayWidth > 0)) {
+    toast("Click two points farther apart", "error");
+    return;
+  }
+  const knownMm = parseFloat(document.getElementById("liveCalKnownMm").value);
+  if(!(knownMm > 0)) {
+    toast("Enter the known distance in mm first", "error");
+    liveStopCalibration();
+    return;
+  }
+  const objective = _liveCalObjective;
+  _liveCalSaving = true;
+  _liveCalDragging = false;
+  const status = document.getElementById("liveCalStatus");
+  try {
+    const geometry = await _liveMeasureGeometry();
+    if(!_liveCalActive || _liveCalObjective !== objective) return;
+    if(!(geometry.pixelWidth > 0) || !(geometry.binning > 0)) {
+      toast("Could not read the image size", "error");
+      return;
+    }
+    const sourcePixels = displayPixels * geometry.pixelWidth / overlayWidth;
+    const mmPerPx = knownMm / sourcePixels;
+    const umPerPixel1x = mmPerPx * 1000 / geometry.binning;
+    liveStopCalibration();
+    status.textContent = "Saving…";
+    let r;
+    try {
+      r = await api("cam_set_scale_calibration", objective, umPerPixel1x);
+    } catch(e) {
+      toast("Could not save calibration", "error");
+      status.textContent = "";
+      return;
+    }
+    if(!r || r.error) {
+      toast((r && r.error) || "Could not save calibration", "error");
+      status.textContent = "";
+      return;
+    }
+    _liveScaleConfig = r;
+    if(_npyScaleConfig) _npyScaleConfig = r;
+    await liveRefreshScaleReadout();
+    npyUpdateScaleBar();
+    const name = _LIVE_OBJECTIVE_NAMES[objective] || ("pos " + objective);
+    const label = `${_liveFormatMmPerPx(mmPerPx)} mm/px`;
+    status.textContent = `Saved ${label}`;
+    toast(`Calibration saved: ${label} at ${name}`, "success");
+    logMsg(
+      `Scale calibration ${name}: ${label} (${umPerPixel1x.toFixed(6)} µm/px at 1×1)`,
+      "camera");
+  } finally {
+    _liveCalSaving = false;
+  }
+}
+
+const _liveCalOverlayEl = document.getElementById("liveCalOverlay");
+_liveCalOverlayEl.addEventListener("pointerdown", event => {
+  if(!_liveCalActive || _liveCalSaving || event.button !== 0) return;
+  event.preventDefault();
+  const point = _liveCalPoint(event);
+  if(!_liveCalStart) {
+    _liveCalStart = point;
+    _liveCalDragging = true;
+    _liveDrawCalLine(point, point);
+    _liveCalOverlayEl.setPointerCapture(event.pointerId);
+    document.getElementById("liveCalStatus").textContent =
+      "Release on the second point, or click it";
+    return;
+  }
+  _liveDrawCalLine(_liveCalStart, point);
+  _liveFinishCalibration(point);
+});
+_liveCalOverlayEl.addEventListener("pointermove", event => {
+  if(!_liveCalActive || !_liveCalStart || _liveCalSaving) return;
+  _liveDrawCalLine(_liveCalStart, _liveCalPoint(event));
+});
+_liveCalOverlayEl.addEventListener("pointerup", event => {
+  if(!_liveCalActive || !_liveCalStart || !_liveCalDragging || _liveCalSaving) return;
+  _liveCalDragging = false;
+  const endPoint = _liveCalPoint(event);
+  const dragged = Math.hypot(
+    endPoint.x - _liveCalStart.x, endPoint.y - _liveCalStart.y);
+  if(dragged >= 8) {
+    _liveDrawCalLine(_liveCalStart, endPoint);
+    _liveFinishCalibration(endPoint);
+    return;
+  }
+  const knownMm = document.getElementById("liveCalKnownMm").value;
+  document.getElementById("liveCalStatus").textContent =
+    `Click the second point · ${knownMm} mm`;
+});
+_liveCalOverlayEl.addEventListener("pointercancel", () => {
+  if(_liveCalActive) liveStopCalibration();
+});
+document.getElementById("scopePreview").addEventListener("load", () => {
+  if(_liveCalActive) _liveFitCalOverlay();
+});
+window.addEventListener("resize", () => {
+  if(_liveCalActive) _liveFitCalOverlay();
+});
+window.addEventListener("keydown", event => {
+  if(event.key === "Escape" && _liveCalActive) {
+    event.preventDefault();
+    liveStopCalibration();
+  }
+});
 
 /* live quick toggles */
 function liveToggleShutter() { _shutterOpen ? scopeShutterClose() : scopeShutterOpen(); }
@@ -1896,6 +2639,7 @@ function scopeSetExposureFrom(v) {
 
 let _liveStageInterval = null;
 let _afRunning = false;
+let _mosaicRunning = false;
 
 async function liveStageRefresh() {
   if(!scopeTiConnected) {
@@ -2082,7 +2826,13 @@ async function liveAutoFocus() {
 
 /* Arrow-key bindings for live view */
 document.addEventListener("keydown", (e) => {
-  const liveActive = document.getElementById("panel-live")?.classList.contains("active");
+  if(e.key === "Escape" && document.getElementById("snapOverlay")?.classList.contains("open")) {
+    snapDiscard();
+    e.preventDefault();
+    return;
+  }
+  const liveActive = document.getElementById("panel-live")?.classList.contains("active") ||
+    document.getElementById("panel-setup")?.classList.contains("active");
   if(!liveActive) return;
   const tag = (e.target.tagName||"").toLowerCase();
   if(tag === "input" || tag === "textarea" || tag === "select") return;
@@ -2097,6 +2847,65 @@ document.addEventListener("keydown", (e) => {
     default: handled = false;
   }
   if(handled) e.preventDefault();
+});
+
+async function liveMosaic3x3() {
+  if(_mosaicRunning) {
+    await api("cam_mosaic_cancel");
+    const status = document.getElementById("liveMosaicStatus");
+    if(status) status.textContent = "Stopping after this tile…";
+    return;
+  }
+  if(!scopeCamConnected) { toast("Connect camera first","error"); return; }
+  if(!scopeTiConnected) { toast("Connect the microscope first","error"); return; }
+  const overlapPct = parseFloat(document.getElementById("liveMosaicOverlap").value);
+  if(!(overlapPct >= 0) || overlapPct >= 100) {
+    toast("Overlap must be from 0 to 99%", "error");
+    return;
+  }
+  const wasLive = scopeLiveActive;
+  if(wasLive) await scopeToggleLive();
+  _mosaicRunning = true;
+  const btn = document.getElementById("liveMosaicBtn");
+  btn.textContent = "Cancel";
+  const status = document.getElementById("liveMosaicStatus");
+  status.style.display = "";
+  status.textContent = "Starting 3×3 mosaic…";
+  try {
+    const r = await api("cam_capture_mosaic", 3, 3, overlapPct / 100);
+    if(r.error) {
+      toast(r.error, "error");
+      status.textContent = r.error;
+      logMsg("Mosaic: "+r.error, "error");
+    } else if(r.cancelled) {
+      status.textContent = `Stopped after ${r.count} image${r.count === 1 ? "" : "s"}`;
+      toast("Mosaic stopped", "info");
+      logMsg(`Mosaic stopped after ${r.count} images`, "camera");
+    } else {
+      const stepXmm = r.step_x_nm / 1e6;
+      const stepYmm = r.step_y_nm / 1e6;
+      status.textContent =
+        `Saved 9 images · each step ${stepXmm.toFixed(3)} × ${stepYmm.toFixed(3)} mm`;
+      toast("3×3 mosaic saved", "success");
+      logMsg(`3×3 mosaic saved (${r.count} files)`, "camera");
+    }
+  } catch(e) {
+    toast("Mosaic failed: "+e.message, "error");
+    status.textContent = "Mosaic failed";
+  } finally {
+    _mosaicRunning = false;
+    btn.textContent = "3×3 Mosaic";
+    liveStageRefresh();
+    if(wasLive && !scopeLiveActive) await scopeToggleLive();
+  }
+}
+
+onEvent("onMosaicProgress", (i, total, name) => {
+  const status = document.getElementById("liveMosaicStatus");
+  if(status) {
+    status.style.display = "";
+    status.textContent = `Tile ${i}/${total} · ${name}`;
+  }
 });
 
 onEvent("onAutofocusProgress", (i, total, msg) => {
@@ -2366,7 +3175,11 @@ async function scopeSetBinning() {
   const v = parseInt(document.getElementById("scopeBinning").value);
   const r = await api('cam_set_binning', v);
   if(r.error) { toast(r.error,"error"); logMsg("Binning: "+r.error,"error"); }
-  else { toast("Binning: "+v+"x"+v,"success"); logMsg("Binning set to "+v+"x"+v,"camera"); }
+  else {
+    toast("Binning: "+v+"x"+v,"success");
+    logMsg("Binning set to "+v+"x"+v,"camera");
+    liveRefreshScaleReadout();
+  }
 }
 async function camSetSaveDir() {
   const p = document.getElementById("camSaveDirInput").value.trim();
@@ -2387,7 +3200,40 @@ async function scopeSnap() {
   const r = await api('cam_snap');
   if(r.error){ toast("Snap: "+r.error,"error"); logMsg("Snap: "+r.error,"error"); return; }
   scopeShowPreview(r.image);
+  document.getElementById("snapModalImage").src = "data:image/jpeg;base64,"+r.image;
+  document.getElementById("snapModalMeta").textContent =
+    `CoolSNAP EZ · ${r.width} × ${r.height} · 16-bit source`;
+  document.getElementById("snapModalState").textContent = "Not saved";
+  document.getElementById("snapSaveBtn").disabled = false;
+  document.getElementById("snapOverlay").classList.add("open");
   logMsg("Snap captured","camera");
+}
+async function snapDiscard() {
+  document.getElementById("snapOverlay").classList.remove("open");
+  document.getElementById("snapModalImage").removeAttribute("src");
+  await api('cam_snap_discard').catch(()=>{});
+  logMsg("Snap discarded","camera");
+}
+async function snapSavePending() {
+  const btn = document.getElementById("snapSaveBtn");
+  btn.disabled = true;
+  document.getElementById("snapModalState").textContent = "Saving…";
+  const r = await api('cam_snap_save_pending');
+  if(r.error) {
+    btn.disabled = false;
+    document.getElementById("snapModalState").textContent = "Save failed";
+    toast("Snap save: "+r.error,"error");
+    logMsg("Snap save: "+r.error,"error");
+    return;
+  }
+  document.getElementById("snapModalState").textContent = "Saved: "+r.file;
+  addToFilmstrip(r.file);
+  toast("Saved: "+r.file,"success");
+  logMsg("Snap saved: "+r.file,"camera");
+  setTimeout(() => {
+    document.getElementById("snapOverlay").classList.remove("open");
+    document.getElementById("snapModalImage").removeAttribute("src");
+  }, 350);
 }
 async function scopeSnapSave() {
   if(!scopeCamConnected){ toast("Connect camera first","error"); return; }
@@ -2692,6 +3538,7 @@ function tlRestoreConfig(p) {
   if(p.repeatCount != null)     document.getElementById("tlRepeat").value   = p.repeatCount;
   if(p.forever != null)         document.getElementById("tlForever").checked = p.forever;
   tlSelectedId = null;
+  tlSelectedIds = new Set();
   document.getElementById("tlEditor")?.classList.remove("open");
   tlUpdateTotalTime();
   tlRender();
@@ -3028,10 +3875,74 @@ async function cfgStartupPrompt() {
 let tlEvents = [];
 let tlLanes  = [{id:"imaging", label:"Imaging", type:"imaging"}];
 let tlSelectedId = null;
+let tlSelectedIds = new Set();
+let tlClipboard = null;
+let _tlPasteAtSec = 0;
+let _tlPasteFromClick = false;
+let _tlJustMarquee = false;
 let tlRunning = false;
 let tlAbort = false;
 let _tlIdCounter = Date.now();
 function _tlId() { return 'ev' + (_tlIdCounter++); }
+
+function _tlExcludeSet(excludeId) {
+  if(excludeId instanceof Set) return excludeId;
+  if(Array.isArray(excludeId)) return new Set(excludeId);
+  return excludeId ? new Set([excludeId]) : new Set();
+}
+function tlSelectOnly(id) {
+  tlSelectedIds = new Set(id ? [id] : []);
+  tlSelectedId = id || null;
+}
+function tlToggleSelect(id) {
+  if(tlSelectedIds.has(id)) {
+    tlSelectedIds.delete(id);
+    if(tlSelectedId === id)
+      tlSelectedId = [...tlSelectedIds][tlSelectedIds.size - 1] || null;
+  } else {
+    tlSelectedIds.add(id);
+    tlSelectedId = id;
+  }
+}
+function tlSelectRangeTo(ev) {
+  const anchor = tlEvents.find(e => e.id === tlSelectedId);
+  if(!anchor || anchor.laneId !== ev.laneId) {
+    tlSelectOnly(ev.id);
+    return;
+  }
+  const lo = Math.min(anchor.start, ev.start);
+  const hi = Math.max(anchor.start, ev.start);
+  tlEvents.filter(e => e.laneId === ev.laneId && e.start >= lo && e.start <= hi)
+    .forEach(e => tlSelectedIds.add(e.id));
+  tlSelectedId = ev.id;
+}
+function tlSyncEditorAfterSelect() {
+  if(tlSelectedIds.size > 1) tlShowMultiEditor();
+  else if(tlSelectedIds.size === 1) {
+    const ev = tlEvents.find(e => e.id === tlSelectedId);
+    if(ev) tlOpenEditor(ev);
+  } else {
+    document.getElementById("tlEditor").classList.remove("open");
+  }
+}
+function tlShowMultiEditor() {
+  const n = tlSelectedIds.size;
+  const editor = document.getElementById("tlEditor");
+  editor.classList.add("open");
+  document.getElementById("tlEdDelete").style.display = "";
+  document.getElementById("tlEdTitle").textContent = n + " events selected";
+  const grid = document.querySelector("#tlEditor .ed-grid");
+  if(grid) grid.style.display = "none";
+  let hint = document.getElementById("tlEdMultiHint");
+  if(!hint) {
+    hint = document.createElement("div");
+    hint.id = "tlEdMultiHint";
+    hint.style.cssText = "font-size:11px;color:var(--text3)";
+    editor.appendChild(hint);
+  }
+  hint.style.display = "";
+  hint.textContent = "Ctrl+click to toggle · drag a box to select · Ctrl+C / X / V to copy, cut, paste";
+}
 
 const TL_COLORS = {
   video:'tl-ev-video', stack:'tl-ev-stack', timelapse:'tl-ev-timelapse',
@@ -3121,9 +4032,10 @@ function _tlCavroConflict(lane, e) {
 function tlOverlaps(laneId, start, dur, excludeId) {
   const end = start + dur;
   if(end > tlCycleSec()) return true;
+  const exclude = _tlExcludeSet(excludeId);
   const lane = tlLanes.find(l => l.id === laneId);
   return tlEvents.some(e => {
-    if(e.id === excludeId) return false;
+    if(exclude.has(e.id)) return false;
     if(!(e.start < end && (e.start + e.duration) > start)) return false;
     if(e.laneId === laneId) return true;
     if(_tlCavroConflict(lane, e)) return true;
@@ -3132,9 +4044,10 @@ function tlOverlaps(laneId, start, dur, excludeId) {
 }
 
 function _tlBlockers(laneId, s, dur, excludeId) {
+  const exclude = _tlExcludeSet(excludeId);
   const lane = tlLanes.find(l => l.id === laneId);
   return tlEvents.filter(e => {
-    if(e.id === excludeId) return false;
+    if(exclude.has(e.id)) return false;
     if(!((e.start + e.duration) > s && e.start < (s + dur))) return false;
     if(e.laneId === laneId) return true;
     if(_tlCavroConflict(lane, e)) return true;
@@ -3166,6 +4079,7 @@ function tlAddEvent(type) {
     start: 0, duration: 2,
     acqPreset: '',
     stackPresets: [],
+    stackMarkers: [],
     frames: type === 'timelapse' ? 10 : 1,
     interval: type === 'timelapse' ? 1000 : 0,
     fps: 30
@@ -3179,7 +4093,7 @@ function tlAddEvent(type) {
   const safeStart = tlFindFreeStart(imgLane.id, startSec, ev.duration, null);
   ev.start = safeStart;
   tlEvents.push(ev); tlSaveEvents();
-  tlSelectedId = ev.id; tlRender(); tlOpenEditor(ev);
+  tlSelectOnly(ev.id); tlRender(); tlOpenEditor(ev);
 }
 
 /* -- Pump lane feature (commented out) --
@@ -3198,7 +4112,7 @@ function tlAddPumpEvent() {
     action: 'run'
   };
   tlEvents.push(ev); tlSaveEvents();
-  tlSelectedId = ev.id; tlRender(); tlOpenEditor(ev);
+  tlSelectOnly(ev.id); tlRender(); tlOpenEditor(ev);
 }
 
 function tlAddPumpLane() {
@@ -3235,7 +4149,7 @@ function tlAddCavroEvent() {
     volume: 0.5, velocity: 100, velUnit: 'ulmin'
   };
   tlEvents.push(ev); tlSaveEvents();
-  tlSelectedId = ev.id; tlRender(); tlOpenEditor(ev);
+  tlSelectOnly(ev.id); tlRender(); tlOpenEditor(ev);
 }
 
 function tlRemoveLane(laneId) {
@@ -3245,7 +4159,7 @@ function tlRemoveLane(laneId) {
   tlEvents = tlEvents.filter(e => e.laneId !== laneId);
   tlSaveLanes(); tlSaveEvents();
   if(tlSelectedId && !tlEvents.find(e => e.id === tlSelectedId)) {
-    tlSelectedId = null;
+    tlSelectOnly(null);
     document.getElementById("tlEditor").classList.remove("open");
   }
   tlRender();
@@ -3308,6 +4222,7 @@ function tlRender() {
   tlDrawAxis();
 
   const lanesEl = document.getElementById("tlLanes");
+  lanesEl.classList.toggle("has-selection", tlSelectedIds.size > 0);
   lanesEl.innerHTML = '';
 
   tlLanes.forEach(lane => {
@@ -3361,7 +4276,11 @@ function tlRender() {
       const width = Math.max(ev.duration * pps, 14);
       const colorClass = TL_COLORS[ev.type] || 'tl-ev-pump';
       const div = document.createElement("div");
-      div.className = 'tl-event ' + colorClass + (ev.id===tlSelectedId?' selected':'') + (isMirror?' tl-mirror':'');
+      const multi = tlSelectedIds.size > 1;
+      div.className = 'tl-event ' + colorClass
+        + (tlSelectedIds.has(ev.id)?' selected':'')
+        + (tlSelectedIds.has(ev.id) && multi?' tl-multi':'')
+        + (isMirror?' tl-mirror':'');
       div.style.left = left + 'px';
       div.style.width = width + 'px';
       div.dataset.id = ev.id;
@@ -3388,8 +4307,26 @@ function tlRender() {
       if(!isMirror) {
         div.addEventListener("mousedown", e => {
           if(e.target.classList.contains("ev-handle")) return;
-          tlSelectedId = ev.id;
-          tlRender(); tlOpenEditor(ev);
+          e.stopPropagation();
+          const ctrl = e.ctrlKey || e.metaKey;
+          if(ctrl) {
+            e.preventDefault();
+            tlToggleSelect(ev.id);
+            tlRender();
+            tlSyncEditorAfterSelect();
+            return;
+          }
+          if(e.shiftKey) {
+            e.preventDefault();
+            tlSelectRangeTo(ev);
+            tlRender();
+            tlSyncEditorAfterSelect();
+            return;
+          }
+          if(!tlSelectedIds.has(ev.id)) tlSelectOnly(ev.id);
+          else tlSelectedId = ev.id;
+          tlRender();
+          tlSyncEditorAfterSelect();
           _tlStartDrag(e, ev, 'move', laneDiv, pps);
         });
         div.querySelector(".ev-handle.left").addEventListener("mousedown", e => {
@@ -3402,9 +4339,19 @@ function tlRender() {
         });
       } else {
         div.addEventListener("mousedown", e => {
-          tlSelectedId = ev.id;
-          const real = tlEvents.find(x => x.id === ev.id);
-          if(real){ tlRender(); tlOpenEditor(real); }
+          e.stopPropagation();
+          const ctrl = e.ctrlKey || e.metaKey;
+          if(ctrl) {
+            tlToggleSelect(ev.id);
+          } else if(e.shiftKey) {
+            tlSelectRangeTo(ev);
+          } else if(!tlSelectedIds.has(ev.id)) {
+            tlSelectOnly(ev.id);
+          } else {
+            tlSelectedId = ev.id;
+          }
+          tlRender();
+          tlSyncEditorAfterSelect();
         });
         div.style.cursor = 'pointer';
       }
@@ -3436,10 +4383,11 @@ function tlRender() {
 }
 
 /* ── Snap-to-edge helpers ── */
-function _tlSnapEdges(evId) {
+function _tlSnapEdges(excludeId) {
+  const exclude = _tlExcludeSet(excludeId);
   const edges = [];
   tlEvents.forEach(e => {
-    if(e.id === evId) return;
+    if(exclude.has(e.id)) return;
     edges.push(e.start, e.start + e.duration);
   });
   return edges;
@@ -3459,13 +4407,18 @@ function _tlStartDrag(e, ev, mode, lane, pps) {
   const startX = e.clientX;
   const origStart = ev.start;
   const origDur = ev.duration;
-  const edges = _tlSnapEdges(ev.id);
+  const movingIds = (mode === 'move' && tlSelectedIds.has(ev.id) && tlSelectedIds.size > 1)
+    ? new Set(tlSelectedIds) : new Set([ev.id]);
+  const origStarts = {};
+  tlEvents.forEach(e0 => { if(movingIds.has(e0.id)) origStarts[e0.id] = e0.start; });
+  const edges = _tlSnapEdges(movingIds);
   const snapThresh = 0.3;
-  const rulerWrap = document.getElementById("tlScroll");
   let snapLines = [];
+  let moved = false;
 
   function onMove(e2) {
     const dx = e2.clientX - startX;
+    if(Math.abs(dx) > 2) moved = true;
     const dt = dx / pps;
     let newStart = ev.start, newDur = ev.duration;
 
@@ -3480,6 +4433,36 @@ function _tlStartDrag(e, ev, mode, lane, pps) {
         newStart = dL <= dR ? snLeft : snRight - newDur;
       }
       newStart = Math.max(0, newStart);
+      const shift = newStart - origStart;
+      let ok = true;
+      const proposed = [];
+      for(const id of movingIds) {
+        const e0 = tlEvents.find(x => x.id === id);
+        if(!e0) continue;
+        const ns = Math.max(0, Math.round((origStarts[id] + shift)*20)/20);
+        if(tlOverlaps(e0.laneId, ns, e0.duration, movingIds)) { ok = false; break; }
+        proposed.push({e0, ns});
+      }
+      if(!ok) return;
+      proposed.forEach(p => { p.e0.start = p.ns; });
+      tlRender();
+      if(movingIds.size === 1) tlOpenEditor(ev);
+
+      snapLines.forEach(l => l.remove());
+      snapLines = [];
+      const snappedEdges = new Set();
+      [newStart, newStart + newDur].forEach(t => {
+        if(edges.some(ed => Math.abs(ed - t) < 0.01)) snappedEdges.add(t);
+      });
+      const lanesEl = document.getElementById("tlLanes");
+      snappedEdges.forEach(t => {
+        const line = document.createElement("div");
+        line.className = "tl-snap-line";
+        line.style.left = (t * pps + 56) + "px";
+        lanesEl.appendChild(line);
+        snapLines.push(line);
+      });
+      return;
     } else if(mode === 'resize-left') {
       newStart = Math.max(0, Math.round((origStart + dt)*20)/20);
       newStart = _tlSnapVal(newStart, edges, snapThresh);
@@ -3520,6 +4503,11 @@ function _tlStartDrag(e, ev, mode, lane, pps) {
     snapLines.forEach(l => l.remove());
     document.removeEventListener("mousemove", onMove);
     document.removeEventListener("mouseup", onUp);
+    if(!moved && mode === 'move' && tlSelectedIds.size > 1) {
+      tlSelectOnly(ev.id);
+      tlRender();
+      tlSyncEditorAfterSelect();
+    }
     tlSaveEvents();
   }
   document.addEventListener("mousemove", onMove);
@@ -3634,6 +4622,10 @@ function tlDualPushRoleChanged(which) {
 }
 
 function tlOpenEditor(ev) {
+  const hint = document.getElementById("tlEdMultiHint");
+  if(hint) hint.style.display = "none";
+  const grid = document.querySelector("#tlEditor .ed-grid");
+  if(grid) grid.style.display = "";
   const editor = document.getElementById("tlEditor");
   editor.classList.add("open");
   document.getElementById("tlEdDelete").style.display = "";
@@ -3913,34 +4905,55 @@ function tlOpenEditor(ev) {
     } else if(ev.type === 'stack') {
       const imgObj = _loadStore("mosaic_imaging_presets");
       const acqNames = Object.keys(imgObj);
+      tlStackNormalize(ev);
       const selPresets = ev.stackPresets || [];
+      const markers = (typeof markersGetAll === 'function') ? markersGetAll() : [];
+      const hasMarkers = markers.length > 0;
       let rows = selPresets.map((p, i) => {
         const a = imgObj[p] || {};
         const cube = _FILTER_CUBE_NAME[a.filter] || '?';
         const resolvedC = imgResolveColor(a);
         const swHex = _ACQ_COLOR_HEX[resolvedC] || '#888';
+        const chMarker = ev.stackMarkers[i] || '';
         return `<tr>
           <td style="padding:2px 4px"><span style="display:inline-block;width:8px;height:8px;background:${swHex};border-radius:2px;vertical-align:middle;margin-right:4px"></span>${p}</td>
           <td style="padding:2px 4px;font-size:10px;color:var(--text3)">${cube} — ${a.exposure_ms||'?'}ms ${a.binning||'?'}x</td>
           <td style="padding:2px 4px">
+            <select onchange="tlStackChSetMarker(${i}, this.value)" style="font-size:11px;max-width:140px"
+                    ${hasMarkers ? '' : 'disabled'}>
+              ${tlStackMarkerOptionsHtml(chMarker, '— default —')}
+            </select>
+          </td>
+          <td style="padding:2px 4px;white-space:nowrap">
             <button class="btn btn-sm" onclick="tlStackChMove(${i},-1)" style="padding:0 4px">&uarr;</button>
             <button class="btn btn-sm" onclick="tlStackChMove(${i},1)" style="padding:0 4px">&darr;</button>
             <button class="btn btn-sm" onclick="tlStackChRemove(${i})" style="padding:0 4px;color:var(--red)">&times;</button>
           </td>
         </tr>`;
       }).join('');
+      const header = selPresets.length ? `<tr>
+          <td style="padding:2px 4px;font-size:9px;color:var(--text3);text-transform:uppercase">Channel</td>
+          <td></td>
+          <td style="padding:2px 4px;font-size:9px;color:var(--text3);text-transform:uppercase">Position</td>
+          <td></td>
+        </tr>` : '';
       ts.innerHTML = `<div style="margin-bottom:4px">
         <label style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px">
           Stack Channels</label>
-        <table style="width:100%;font-size:11px;margin:4px 0">${rows || '<tr><td style="color:var(--text3);padding:4px">No channels added</td></tr>'}</table>
+        <table style="width:100%;font-size:11px;margin:4px 0">${header}${rows || '<tr><td style="color:var(--text3);padding:4px">No channels added</td></tr>'}</table>
         <div class="field" style="margin:4px 0 0 0">
           <select id="tlStackAddSel" style="flex:1;font-size:11px">
             ${acqNames.map(n => `<option value="${n}">${n}</option>`).join('')}
           </select>
           <button class="btn btn-sm accent" onclick="tlStackChAdd()">Add</button>
+          <button class="btn btn-sm" onclick="tlStackChAddAllMarkers()" title="Add this preset once at each saved marker"
+                  ${hasMarkers ? '' : 'disabled'}>All positions</button>
         </div>
       </div>
-      ${tlMarkerEditorHtml(ev)}`;
+      ${tlMarkerEditorHtml(ev, {label: 'Default position', hint: hasMarkers ? 'used when a channel is set to default' : 'no markers set yet (use Live View)'})}
+      <div style="font-size:10px;color:var(--text3);margin-top:4px" id="tlEdStackDur">
+        Duration: ${tlStackCalcDuration(ev)}s
+      </div>`;
     } else if(ev.type === 'timelapse') {
       const tlDurSec = tlTimelapseCalcDuration(ev);
       ts.innerHTML = `<div class="field" style="margin:0">
@@ -3964,20 +4977,84 @@ function tlOpenEditor(ev) {
 
 /* Marker dropdown for timeline event editors.
    Markers are independent of presets — flat list of all named XYZ positions. */
-function tlMarkerEditorHtml(ev) {
+function tlStackMarkerOptionsHtml(selectedId, emptyLabel) {
   const markers = (typeof markersGetAll === 'function') ? markersGetAll() : [];
   const opts = markers.map(m =>
-    `<option value="${m.id}" ${ev.markerRef === m.id ? 'selected' : ''}>${m.name}</option>`).join("");
+    `<option value="${m.id}" ${selectedId === m.id ? 'selected' : ''}>${m.name}</option>`).join("");
+  return `<option value="">${emptyLabel}</option>${opts}`;
+}
+
+function tlMarkerEditorHtml(ev, opts) {
+  const markers = (typeof markersGetAll === 'function') ? markersGetAll() : [];
   const hasMarkers = markers.length > 0;
+  const label = (opts && opts.label) || 'Position';
+  const hint = (opts && opts.hint) || (hasMarkers ? 'optional' : 'no markers set yet (use Live View)');
   return `<div class="field" style="margin:4px 0 0 0">
-    <label>Position</label>
+    <label>${label}</label>
     <select id="tlEdMarker" onchange="tlEditorChanged()" style="flex:1;font-size:11px"
             ${hasMarkers ? '' : 'disabled'}>
-      <option value="">— current —</option>
-      ${opts}
+      ${tlStackMarkerOptionsHtml(ev.markerRef, '— current —')}
     </select>
-    <span style="font-size:10px;color:var(--text3)">${hasMarkers ? 'optional' : 'no markers set yet (use Live View)'}</span>
+    <span style="font-size:10px;color:var(--text3)">${hint}</span>
   </div>`;
+}
+
+function tlStackNormalize(ev) {
+  if(!ev.stackPresets) ev.stackPresets = [];
+  if(!ev.stackMarkers) ev.stackMarkers = [];
+  while(ev.stackMarkers.length < ev.stackPresets.length) ev.stackMarkers.push('');
+  if(ev.stackMarkers.length > ev.stackPresets.length)
+    ev.stackMarkers.length = ev.stackPresets.length;
+}
+
+function tlStackEffectiveMarker(ev, i) {
+  tlStackNormalize(ev);
+  return ev.stackMarkers[i] || ev.markerRef || '';
+}
+
+function tlStackBuildChannels(ev) {
+  const presetNames = ev.stackPresets || [];
+  const imgStore = _loadStore("mosaic_imaging_presets");
+  tlStackNormalize(ev);
+  return presetNames.map((pn, i) => {
+    const p = imgStore[pn]; if(!p) return null;
+    const ch = {
+      objective: p.objective ?? null, filter: p.filter ?? null,
+      lamp_intensity: p.lampIntensity ?? null,
+      lamp_on: p.lampOn != null ? !!p.lampOn : null,
+      shutter_open: p.shutterOpen != null ? !!p.shutterOpen : null,
+      il_shutter_open: p.ilShutterOpen != null ? !!p.ilShutterOpen : null,
+      il_nd: p.ilNd ?? null,
+      exposure_ms: p.exposure_ms ?? null, binning: p.binning ?? 1,
+      color: imgResolveColor(p)
+    };
+    const markerId = tlStackEffectiveMarker(ev, i);
+    const m = markerId ? markersGet(markerId) : null;
+    if(m) {
+      ch.x_nm = m.x_nm;
+      ch.y_nm = m.y_nm;
+      ch.z_nm = m.z_nm;
+      ch.position = m.name;
+      ch.marker_id = m.id;
+    }
+    return ch;
+  }).filter(Boolean);
+}
+
+function tlStackTravelSec(fromId, toId) {
+  if(!toId) return 0;
+  const get = (typeof markersGet === 'function') ? markersGet : () => null;
+  const to = get(toId);
+  const SETTLE = 0.8;
+  const XY_NM_S = 8e6;
+  const Z_NM_S = 1.5e6;
+  if(!to || !fromId) return 3 + SETTLE;
+  const from = get(fromId);
+  if(!from) return 3 + SETTLE;
+  const tx = Math.abs((to.x_nm || 0) - (from.x_nm || 0)) / XY_NM_S;
+  const ty = Math.abs((to.y_nm || 0) - (from.y_nm || 0)) / XY_NM_S;
+  const tz = Math.abs((to.z_nm || 0) - (from.z_nm || 0)) / Z_NM_S;
+  return tx + ty + tz + SETTLE;
 }
 
 function tlStackCalcDuration(ev) {
@@ -3985,12 +5062,26 @@ function tlStackCalcDuration(ev) {
   if(!presets.length) return 2;
   const imgObj = _loadStore("mosaic_imaging_presets");
   let total = 0;
-  for(const pn of presets) {
-    const a = imgObj[pn] || {};
+  let prevMarker = null;
+  for(let i = 0; i < presets.length; i++) {
+    const a = imgObj[presets[i]] || {};
     total += 2.5 + ((a.exposure_ms || 50) / 1000);
+    const mk = tlStackEffectiveMarker(ev, i);
+    if(mk && mk !== prevMarker) {
+      total += tlStackTravelSec(prevMarker, mk);
+      prevMarker = mk;
+    } else if(mk) {
+      prevMarker = mk;
+    }
   }
   total += 1.5;
-  return Math.ceil(total);
+  return Math.max(2, Math.ceil(total));
+}
+
+function tlStackApplyDuration(ev) {
+  ev.duration = tlStackCalcDuration(ev);
+  const el = document.getElementById("tlEdStackDur");
+  if(el) el.textContent = `Duration: ${ev.duration}s`;
 }
 
 function tlTimelapseCalcDuration(ev) {
@@ -4005,26 +5096,58 @@ function tlStackChAdd() {
   if(!ev) return;
   const sel = document.getElementById("tlStackAddSel");
   if(!sel || !sel.value) return;
-  if(!ev.stackPresets) ev.stackPresets = [];
+  tlStackNormalize(ev);
   ev.stackPresets.push(sel.value);
-  ev.duration = tlStackCalcDuration(ev);
+  ev.stackMarkers.push('');
+  tlStackApplyDuration(ev);
   tlSaveEvents(); tlOpenEditor(ev);
+}
+function tlStackChAddAllMarkers() {
+  const ev = tlEvents.find(e => e.id === tlSelectedId);
+  if(!ev) return;
+  const sel = document.getElementById("tlStackAddSel");
+  if(!sel || !sel.value) return;
+  const markers = (typeof markersGetAll === 'function') ? markersGetAll() : [];
+  if(!markers.length) { toast("No markers set yet (use Live View)","error"); return; }
+  tlStackNormalize(ev);
+  for(const m of markers) {
+    ev.stackPresets.push(sel.value);
+    ev.stackMarkers.push(m.id);
+  }
+  tlStackApplyDuration(ev);
+  tlSaveEvents(); tlOpenEditor(ev);
+}
+function tlStackChSetMarker(idx, markerId) {
+  const ev = tlEvents.find(e => e.id === tlSelectedId);
+  if(!ev) return;
+  tlStackNormalize(ev);
+  if(idx < 0 || idx >= ev.stackPresets.length) return;
+  ev.stackMarkers[idx] = markerId || '';
+  tlStackApplyDuration(ev);
+  tlSaveEvents(); tlRender();
 }
 function tlStackChRemove(idx) {
   const ev = tlEvents.find(e => e.id === tlSelectedId);
   if(!ev || !ev.stackPresets) return;
+  tlStackNormalize(ev);
   ev.stackPresets.splice(idx, 1);
-  ev.duration = tlStackCalcDuration(ev);
+  ev.stackMarkers.splice(idx, 1);
+  tlStackApplyDuration(ev);
   tlSaveEvents(); tlOpenEditor(ev);
 }
 function tlStackChMove(idx, dir) {
   const ev = tlEvents.find(e => e.id === tlSelectedId);
   if(!ev || !ev.stackPresets) return;
+  tlStackNormalize(ev);
   const newIdx = idx + dir;
   if(newIdx < 0 || newIdx >= ev.stackPresets.length) return;
   const tmp = ev.stackPresets[idx];
   ev.stackPresets[idx] = ev.stackPresets[newIdx];
   ev.stackPresets[newIdx] = tmp;
+  const tmpM = ev.stackMarkers[idx];
+  ev.stackMarkers[idx] = ev.stackMarkers[newIdx];
+  ev.stackMarkers[newIdx] = tmpM;
+  tlStackApplyDuration(ev);
   tlSaveEvents(); tlOpenEditor(ev);
 }
 
@@ -4062,7 +5185,15 @@ function tlEditorChanged() {
     ev.laneId = newLaneId;
   } else {
     document.getElementById("tlEdStart").value = _secToMMSS(ev.start);
-    document.getElementById("tlEdDur").value = ev.duration;
+    if(ev.type === 'stack' || ev.type === 'timelapse') {
+      ev.duration = wantDur;
+    } else {
+      document.getElementById("tlEdDur").value = ev.duration;
+    }
+  }
+  if(ev.type === 'stack') {
+    const el = document.getElementById("tlEdStackDur");
+    if(el) el.textContent = `Duration: ${ev.duration}s`;
   }
 
   /* -- pump editor save (commented out) --
@@ -4151,7 +5282,7 @@ function tlEditorChanged() {
       const defVelMlS = 1400 / countsPerMl;
       const vel = velMlS || defVelMlS;
       const vol = ev.volume || 0;
-      const maxPullMlS = 2000 / countsPerMl;
+      const maxPullMlS = 1800 / countsPerMl;
       const fullStrokes = Math.floor(vol / syr);
       const remaining = vol % syr;
       const totalStrokes = fullStrokes + (remaining > 0.0001 ? 1 : 0);
@@ -4232,11 +5363,166 @@ function tlEditorChanged() {
 }
 
 function tlDeleteSelected() {
-  tlEvents = tlEvents.filter(e => e.id !== tlSelectedId);
-  tlSelectedId = null;
+  if(!tlSelectedIds.size && tlSelectedId) tlSelectOnly(tlSelectedId);
+  if(!tlSelectedIds.size) return;
+  tlEvents = tlEvents.filter(e => !tlSelectedIds.has(e.id));
+  tlSelectOnly(null);
   tlSaveEvents();
   document.getElementById("tlEditor").classList.remove("open");
+  const hint = document.getElementById("tlEdMultiHint");
+  if(hint) hint.style.display = "none";
   tlRender();
+}
+
+function tlSelectedEvents() {
+  return tlEvents.filter(e => tlSelectedIds.has(e.id))
+    .sort((a,b) => a.start - b.start || String(a.laneId).localeCompare(String(b.laneId)));
+}
+function tlCloneEvent(src) {
+  const c = JSON.parse(JSON.stringify(src));
+  delete c._mirror;
+  delete c._mirrorRole;
+  c.id = _tlId();
+  return c;
+}
+function tlCopySelected() {
+  const sel = tlSelectedEvents();
+  if(!sel.length) { toast("Nothing selected","info"); return; }
+  tlClipboard = sel.map(e => JSON.parse(JSON.stringify(e)));
+  toast(sel.length === 1 ? "Copied" : `Copied ${sel.length} events`,"info");
+}
+function tlCutSelected() {
+  const sel = tlSelectedEvents();
+  if(!sel.length) { toast("Nothing selected","info"); return; }
+  tlClipboard = sel.map(e => JSON.parse(JSON.stringify(e)));
+  const ids = new Set(sel.map(e => e.id));
+  tlEvents = tlEvents.filter(e => !ids.has(e.id));
+  tlSelectOnly(null);
+  document.getElementById("tlEditor").classList.remove("open");
+  const hint = document.getElementById("tlEdMultiHint");
+  if(hint) hint.style.display = "none";
+  tlSaveEvents();
+  tlRender();
+  toast(sel.length === 1 ? "Cut" : `Cut ${sel.length} events`,"info");
+}
+function tlShiftGroupToFit(clones) {
+  let extra = 0;
+  for(let attempts = 0; attempts < 400; attempts++) {
+    let maxBump = extra;
+    let any = false;
+    for(const c of clones) {
+      const s = Math.round((c.start + extra) * 20) / 20;
+      if(s < 0) {
+        any = true;
+        maxBump = Math.max(maxBump, extra - s);
+        continue;
+      }
+      if(tlOverlaps(c.laneId, s, c.duration, null)) {
+        any = true;
+        const blockers = _tlBlockers(c.laneId, s, c.duration, null);
+        if(!blockers.length) return null;
+        const next = Math.max(...blockers.map(b => b.start + b.duration));
+        maxBump = Math.max(maxBump, next - c.start);
+      }
+    }
+    if(!any) {
+      clones.forEach(c => { c.start = Math.round((c.start + extra) * 20) / 20; });
+      return clones;
+    }
+    const nextExtra = Math.round(maxBump * 20) / 20;
+    extra = nextExtra <= extra ? extra + 0.05 : nextExtra;
+  }
+  return null;
+}
+function tlPasteClipboard() {
+  if(!tlClipboard || !tlClipboard.length) { toast("Clipboard empty","info"); return; }
+  const clones = [];
+  for(const src of tlClipboard) {
+    const c = tlCloneEvent(src);
+    if(!tlLanes.find(l => l.id === c.laneId)) {
+      const wantType = c.type === 'cavro' ? 'cavro' : (c.type === 'pump' ? 'pump' : 'imaging');
+      const typeLane = tlLanes.find(l => l.type === wantType);
+      if(!typeLane) continue;
+      c.laneId = typeLane.id;
+      if(typeLane.type === 'cavro') c.cavroIdx = typeLane.cavroIdx;
+    }
+    clones.push(c);
+  }
+  if(!clones.length) { toast("No matching lanes to paste into","error"); return; }
+  const minStart = Math.min(...clones.map(e => e.start));
+  const target = _tlPasteFromClick ? _tlPasteAtSec : minStart;
+  const baseDelta = target - minStart;
+  clones.forEach(e => { e.start = Math.max(0, Math.round((e.start + baseDelta) * 20) / 20); });
+  if(!tlShiftGroupToFit(clones)) {
+    toast("Not enough room in the cycle to paste","error");
+    return;
+  }
+  tlEvents.push(...clones);
+  tlSelectedIds = new Set(clones.map(c => c.id));
+  tlSelectedId = clones[clones.length - 1].id;
+  tlSaveEvents();
+  tlRender();
+  tlSyncEditorAfterSelect();
+}
+
+function tlSecFromClientX(clientX) {
+  const lane = document.querySelector("#tlLanes .tl-lane");
+  if(!lane) return 0;
+  const rect = lane.getBoundingClientRect();
+  return Math.max(0, Math.round(((clientX - rect.left) / tlPxPerSec()) * 20) / 20);
+}
+function tlBindMarquee() {
+  const wrap = document.getElementById("tlScroll");
+  if(!wrap || wrap._tlMarqueeBound) return;
+  wrap._tlMarqueeBound = true;
+  wrap.addEventListener("mousedown", e => {
+    if(e.button !== 0) return;
+    if(e.target.closest(".tl-event") || e.target.closest("button") || e.target.closest(".tl-lane-actions")) return;
+    const wr = wrap.getBoundingClientRect();
+    if(e.clientX > wr.left + wrap.clientWidth || e.clientY > wr.top + wrap.clientHeight) return;
+    _tlPasteAtSec = tlSecFromClientX(e.clientX);
+    _tlPasteFromClick = true;
+    const ctrl = e.ctrlKey || e.metaKey;
+    const x0 = e.clientX, y0 = e.clientY;
+    let box = null;
+    let dragged = false;
+    function onMove(e2) {
+      if(!dragged && Math.hypot(e2.clientX - x0, e2.clientY - y0) < 4) return;
+      if(!dragged) {
+        dragged = true;
+        box = document.createElement("div");
+        box.className = "tl-marquee";
+        document.body.appendChild(box);
+      }
+      const x = Math.min(x0, e2.clientX);
+      const y = Math.min(y0, e2.clientY);
+      box.style.left = x + "px";
+      box.style.top = y + "px";
+      box.style.width = Math.abs(e2.clientX - x0) + "px";
+      box.style.height = Math.abs(e2.clientY - y0) + "px";
+    }
+    function onUp(e2) {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      if(box) box.remove();
+      if(!dragged) return;
+      _tlJustMarquee = true;
+      const x1 = Math.min(x0, e2.clientX), x2 = Math.max(x0, e2.clientX);
+      const y1 = Math.min(y0, e2.clientY), y2 = Math.max(y0, e2.clientY);
+      if(!ctrl) tlSelectedIds = new Set();
+      document.querySelectorAll("#tlLanes .tl-event").forEach(el => {
+        const r = el.getBoundingClientRect();
+        if(r.left < x2 && r.right > x1 && r.top < y2 && r.bottom > y1 && el.dataset.id)
+          tlSelectedIds.add(el.dataset.id);
+      });
+      const ids = [...tlSelectedIds];
+      tlSelectedId = ids.length ? ids[ids.length - 1] : null;
+      tlRender();
+      tlSyncEditorAfterSelect();
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  });
 }
 
 let _tlIgnoreEditorBlurUntil = 0;
@@ -4246,10 +5532,43 @@ document.addEventListener("mousedown", e => {
 }, true);
 document.addEventListener("click", e => {
   if(Date.now() < _tlIgnoreEditorBlurUntil) return;
+  if(_tlJustMarquee) { _tlJustMarquee = false; return; }
+  if(e.ctrlKey || e.metaKey) return;
   if(!e.target.closest(".tl-event") && !e.target.closest(".tl-editor") &&
      !e.target.closest(".tl-toolbar") && e.target.closest(".tl-ruler-wrap")) {
-    tlSelectedId = null;
+    tlSelectOnly(null);
     document.getElementById("tlEditor").classList.remove("open");
+    const hint = document.getElementById("tlEdMultiHint");
+    if(hint) hint.style.display = "none";
+    tlRender();
+  }
+});
+document.addEventListener("keydown", e => {
+  const tlActive = document.getElementById("panel-timeline")?.classList.contains("active");
+  if(!tlActive) return;
+  const tag = (e.target.tagName || "").toLowerCase();
+  if(tag === "input" || tag === "textarea" || tag === "select") return;
+  const ctrl = e.ctrlKey || e.metaKey;
+  const k = (e.key || "").toLowerCase();
+  if(ctrl && k === "c") { e.preventDefault(); tlCopySelected(); }
+  else if(ctrl && k === "x") { e.preventDefault(); tlCutSelected(); }
+  else if(ctrl && k === "v") { e.preventDefault(); tlPasteClipboard(); }
+  else if(ctrl && k === "a") {
+    e.preventDefault();
+    tlSelectedIds = new Set(tlEvents.map(ev => ev.id));
+    tlSelectedId = tlEvents.length ? tlEvents[tlEvents.length - 1].id : null;
+    tlRender();
+    tlSyncEditorAfterSelect();
+  }
+  else if((e.key === "Delete" || e.key === "Backspace") && tlSelectedIds.size) {
+    e.preventDefault();
+    tlDeleteSelected();
+  }
+  else if(e.key === "Escape") {
+    tlSelectOnly(null);
+    document.getElementById("tlEditor").classList.remove("open");
+    const hint = document.getElementById("tlEdMultiHint");
+    if(hint) hint.style.display = "none";
     tlRender();
   }
 });
@@ -4460,6 +5779,13 @@ async function tlRunCycle(sorted, progress) {
               await api('cavro_dualpush_stop');
             }
           }
+        } else if(ev.type === 'stack') {
+          await api('cam_experiment_set_subdir', 'stack');
+          const channels = tlStackBuildChannels(ev);
+          if(channels.length) {
+            progress.textContent = `${ev.name}: capturing ${channels.length} channels...`;
+            await api('cam_stack_capture', channels, !!ev.keepShutterOpen);
+          }
         } else {
           await tlApplyPresets(ev);
           await tlMoveToMarker(ev);
@@ -4471,27 +5797,6 @@ async function tlRunCycle(sorted, progress) {
             progress.textContent = `${ev.name}: recording ${recDur}s @ ${fps}fps...`;
             await api('cam_record_video', null, recDur, fps);
             await tlSleep(recDur * 1000 + 2000);
-          } else if(ev.type === 'stack') {
-            await api('cam_experiment_set_subdir', 'stack');
-            const presetNames = ev.stackPresets && ev.stackPresets.length ? ev.stackPresets : [];
-            if(presetNames.length) {
-              progress.textContent = `${ev.name}: capturing ${presetNames.length} channels...`;
-              const imgStore = _loadStore("mosaic_imaging_presets");
-              const channels = presetNames.map(pn => {
-                const p = imgStore[pn]; if(!p) return null;
-                return {
-                  objective: p.objective ?? null, filter: p.filter ?? null,
-                  lamp_intensity: p.lampIntensity ?? null,
-                  lamp_on: p.lampOn != null ? !!p.lampOn : null,
-                  shutter_open: p.shutterOpen != null ? !!p.shutterOpen : null,
-                  il_shutter_open: p.ilShutterOpen != null ? !!p.ilShutterOpen : null,
-                  il_nd: p.ilNd ?? null,
-                  exposure_ms: p.exposure_ms ?? null, binning: p.binning ?? 1,
-                  color: imgResolveColor(p)
-                };
-              }).filter(Boolean);
-              await api('cam_stack_capture', channels, !!ev.keepShutterOpen);
-            }
           } else if(ev.type === 'timelapse') {
             await api('cam_experiment_set_subdir', 'timelapse');
             const frames = ev.frames || 10;
@@ -4657,7 +5962,7 @@ function tlStop() {
 function tlClearAll() {
   if(!confirm("Clear all timeline events?")) return;
   tlEvents = [];
-  tlSelectedId = null;
+  tlSelectOnly(null);
   document.getElementById("tlEditor").classList.remove("open");
   tlSaveEvents();
   tlRender();
@@ -4673,6 +5978,7 @@ function tlClearAll() {
   refreshPorts();
   renderMsPresets();
   tlRender();
+  tlBindMarquee();
   tlUpdateTotalTime();
   logMsg("Mosaic Control Center ready","sys");
 
@@ -4710,6 +6016,488 @@ let _npyHistogramGeneration = 0;
 let _npyLastPlaybackHistogramAt = -Infinity;
 let _npyHistogramTimer = null;
 let _npyPendingHistogram = null;
+let _npyScaleConfig = null;
+let _npyFrameScale = null;
+let _npyFrameWidth = 0;
+let _npyCalibrationActive = false;
+let _npyCalibrationStartPoint = null;
+let _npyMeasureActive = false;
+let _npyMeasureStart = null;
+let _npyMeasureDragging = false;
+let _npyMeasureFractions = null;
+
+async function _npyEnsureScaleConfig() {
+  if(_npyScaleConfig) return _npyScaleConfig;
+  const r = await api('cam_get_scale_calibration');
+  if(r && !r.error) _npyScaleConfig = r;
+  return _npyScaleConfig;
+}
+
+function _npyInferredBinning(scale, width) {
+  if(scale && [1,2,4,8].includes(parseInt(scale.binning)))
+    return parseInt(scale.binning);
+  const inferred = Math.round(1392 / Math.max(1, parseInt(width) || 1392));
+  return [1,2,4,8].includes(inferred) ? inferred : 1;
+}
+
+function _npyResolvedScale() {
+  const imageScale = _npyFrameScale;
+  if(!_npyScaleConfig || !imageScale || imageScale.objective_position == null)
+    return null;
+  const binning = _npyInferredBinning(imageScale, _npyFrameWidth);
+  const result = Object.assign({}, imageScale, {binning});
+  const configured =
+    _npyScaleConfig.objectives?.[String(result.objective_position)];
+  // A measured calibration can safely replace nominal metadata for captures
+  // made on the same fixed camera path.
+  if(configured?.calibrated && result.calibration_source !== "calibrated") {
+    const mm1x = parseFloat(configured.mm_per_pixel_1x);
+    const um1x = mm1x > 0 ? mm1x * 1000 : parseFloat(configured.um_per_pixel_1x);
+    result.um_per_pixel_1x = um1x;
+    result.um_per_pixel = um1x * binning;
+    result.mm_per_pixel_1x = um1x / 1000;
+    result.mm_per_pixel = result.mm_per_pixel_1x * binning;
+    result.calibration_source = "calibrated";
+  }
+  return Number.isFinite(parseFloat(result.um_per_pixel)) ? result : null;
+}
+
+function _npyMmPerPixel(scale) {
+  const um = parseFloat(scale && scale.um_per_pixel);
+  if(um > 0) return um / 1000;
+  const mm = parseFloat(scale && scale.mm_per_pixel);
+  return mm > 0 ? mm : NaN;
+}
+
+function _npyFormatMmPerPx(mm) {
+  if(!(mm > 0) || !Number.isFinite(mm)) return "—";
+  return String(parseFloat(mm.toPrecision(4)));
+}
+
+function _npyFormatDistanceMm(mm) {
+  if(!(mm > 0) || !Number.isFinite(mm)) return "—";
+  if(mm >= 1) return `${parseFloat(mm.toPrecision(4))} mm`;
+  const um = mm * 1000;
+  if(um >= 1) return `${parseFloat(mm.toPrecision(4))} mm (${parseFloat(um.toPrecision(4))} µm)`;
+  return `${parseFloat(um.toPrecision(4))} µm`;
+}
+
+function _npyNiceScaleLength(targetUm) {
+  if(!Number.isFinite(targetUm) || targetUm <= 0) return 0;
+  const decade = Math.pow(10, Math.floor(Math.log10(targetUm)));
+  const candidates = [1, 2, 5, 10].map(v => v * decade);
+  return candidates.reduce((best, value) =>
+    Math.abs(value - targetUm) < Math.abs(best - targetUm) ? value : best
+  );
+}
+
+function npyUpdateScaleBar() {
+  const overlay = document.getElementById("npyScaleOverlay");
+  const visible = document.getElementById("npyScaleVisible");
+  const img = document.getElementById("npyImage");
+  const status = document.getElementById("npyScaleStatus");
+  if(!overlay || !visible || !img) return;
+  if(_npyCalibrationActive) _npyFitCalibrationOverlay();
+  if(_npyMeasureActive || _npyMeasureFractions) _npyFitMeasureOverlay();
+  const scale = _npyResolvedScale();
+  if(!visible.checked || img.style.display === "none" || !scale) {
+    overlay.style.display = "none";
+    if(status && !_npyCalibrationActive && !_npyMeasureActive) status.textContent = visible.checked
+      ? "No mm/px metadata (legacy image)" : "";
+    return;
+  }
+
+  const umPerPixel = parseFloat(scale.um_per_pixel);
+  const sourceWidth = parseInt(_npyFrameWidth);
+  const imgRect = img.getBoundingClientRect();
+  if(!(umPerPixel > 0) || !(sourceWidth > 0) || imgRect.width < 40) {
+    overlay.style.display = "none";
+    return;
+  }
+  const barUm = _npyNiceScaleLength(sourceWidth * umPerPixel * 0.2);
+  const barCssPx = barUm / (sourceWidth * umPerPixel) * imgRect.width;
+  if(!(barCssPx >= 20) || barCssPx > imgRect.width - 20) {
+    overlay.style.display = "none";
+    return;
+  }
+
+  document.getElementById("npyScaleLabel").textContent =
+    `${Number.isInteger(barUm) ? barUm : parseFloat(barUm.toPrecision(3))} µm`;
+  document.getElementById("npyScaleLine").style.width = `${barCssPx}px`;
+  overlay.style.display = "block";
+  if(status && !_npyCalibrationActive && !_npyMeasureActive) {
+    const mag = scale.objective_magnification
+      ? `${parseFloat(scale.objective_magnification)}×` : `pos ${scale.objective_position}`;
+    const mm = _npyMmPerPixel(scale);
+    status.textContent =
+      `${_npyFormatMmPerPx(mm)} mm/px · ${mag}, ${scale.binning}×${scale.binning} bin · ${scale.calibration_source}`;
+  }
+}
+
+function _npySetFrameScale(response) {
+  _npyFrameScale = response?.scale || null;
+  _npyFrameWidth = parseInt(response?.width) || 0;
+  requestAnimationFrame(npyUpdateScaleBar);
+}
+
+function _npyCommonChannelScale(channels) {
+  const scales = (channels || []).map(ch => ch?.scale)
+    .filter(scale => Number.isFinite(parseFloat(scale?.um_per_pixel)));
+  if(!scales.length) return null;
+  const first = parseFloat(scales[0].um_per_pixel);
+  return scales.every(scale =>
+    Math.abs(parseFloat(scale.um_per_pixel) - first) <= Math.max(1e-9, first * 1e-6)
+  ) ? scales[0] : null;
+}
+
+function _npyFitCalibrationOverlay() {
+  if(!_npyCalibrationActive) return;
+  const overlay = document.getElementById("npyCalibrationOverlay");
+  const img = document.getElementById("npyImage");
+  const imgRect = img.getBoundingClientRect();
+  if(imgRect.width < 2 || imgRect.height < 2) return;
+  overlay.setAttribute("viewBox", `0 0 ${imgRect.width} ${imgRect.height}`);
+}
+
+function _npyStopCalibration(refresh=true) {
+  _npyCalibrationActive = false;
+  _npyCalibrationStartPoint = null;
+  document.getElementById("npyCalibrationOverlay").style.display = "none";
+  document.getElementById("npyCalibrationBtn").textContent = "Calibrate";
+  if(refresh) npyUpdateScaleBar();
+}
+
+function npyStartCalibration() {
+  if(_npyCalibrationActive) {
+    _npyStopCalibration();
+    return;
+  }
+  if(_npyMeasureActive || _npyMeasureFractions) _npyClearMeasure();
+  if(!_npyFrameScale || _npyFrameScale.objective_position == null) {
+    toast("This legacy image has no saved objective metadata", "error");
+    return;
+  }
+  const knownUm =
+    parseFloat(document.getElementById("npyCalibrationKnownUm").value);
+  if(!(knownUm > 0)) {
+    toast("Enter the known micrometer length first", "error");
+    return;
+  }
+  if(_npyPlaying) npyPlayStop(false);
+  if(_npyStackTlPlaying) npyStackTlStop(false);
+  _npyCalibrationActive = true;
+  const line = document.getElementById("npyCalibrationLine");
+  const start = document.getElementById("npyCalibrationStart");
+  const end = document.getElementById("npyCalibrationEnd");
+  line.setAttribute("visibility", "hidden");
+  start.setAttribute("visibility", "hidden");
+  end.setAttribute("visibility", "hidden");
+  _npyFitCalibrationOverlay();
+  document.getElementById("npyCalibrationOverlay").style.display = "block";
+  document.getElementById("npyCalibrationBtn").textContent = "Cancel";
+  const mag = _npyFrameScale.objective_magnification;
+  document.getElementById("npyScaleStatus").textContent =
+    `Drag across ${knownUm} µm${mag ? ` at ${mag}×` : ""}`;
+}
+
+function _npyCalibrationPoint(event) {
+  const rect =
+    document.getElementById("npyCalibrationOverlay").getBoundingClientRect();
+  return {
+    x: Math.max(0, Math.min(rect.width, event.clientX - rect.left)),
+    y: Math.max(0, Math.min(rect.height, event.clientY - rect.top)),
+  };
+}
+
+function _npyDrawCalibrationLine(startPoint, endPoint) {
+  const line = document.getElementById("npyCalibrationLine");
+  const start = document.getElementById("npyCalibrationStart");
+  const end = document.getElementById("npyCalibrationEnd");
+  line.setAttribute("x1", startPoint.x);
+  line.setAttribute("y1", startPoint.y);
+  line.setAttribute("x2", endPoint.x);
+  line.setAttribute("y2", endPoint.y);
+  start.setAttribute("cx", startPoint.x);
+  start.setAttribute("cy", startPoint.y);
+  end.setAttribute("cx", endPoint.x);
+  end.setAttribute("cy", endPoint.y);
+  line.setAttribute("visibility", "visible");
+  start.setAttribute("visibility", "visible");
+  end.setAttribute("visibility", "visible");
+}
+
+async function _npyFinishCalibration(endPoint) {
+  const startPoint = _npyCalibrationStartPoint;
+  if(!startPoint) return;
+  const displayPixels = Math.hypot(
+    endPoint.x - startPoint.x, endPoint.y - startPoint.y);
+  const overlayWidth =
+    document.getElementById("npyCalibrationOverlay").getBoundingClientRect().width;
+  if(displayPixels < 5 || !(overlayWidth > 0) || !(_npyFrameWidth > 0)) {
+    toast("Draw a longer calibration line", "error");
+    return;
+  }
+  const knownUm =
+    parseFloat(document.getElementById("npyCalibrationKnownUm").value);
+  const sourcePixels = displayPixels * _npyFrameWidth / overlayWidth;
+  const binning = _npyInferredBinning(_npyFrameScale, _npyFrameWidth);
+  const umPerPixel1x = knownUm / sourcePixels / binning;
+  const position = parseInt(_npyFrameScale.objective_position);
+  const currentFile = _npyCurrentFile;
+  _npyStopCalibration(false);
+  document.getElementById("npyScaleStatus").textContent =
+    `Saving ${sourcePixels.toFixed(1)} px calibration…`;
+
+  const r = await api(
+    'cam_set_scale_calibration', position, umPerPixel1x);
+  if(r.error) {
+    toast(r.error, "error");
+    npyUpdateScaleBar();
+    return;
+  }
+  _npyScaleConfig = r;
+  _liveScaleConfig = r;
+  if(typeof _liveRefreshObjectiveLabels === "function") _liveRefreshObjectiveLabels();
+  if(currentFile === _npyCurrentFile &&
+     position === parseInt(_npyFrameScale?.objective_position)) {
+    _npyFrameScale.um_per_pixel_1x = umPerPixel1x;
+    _npyFrameScale.um_per_pixel = umPerPixel1x * binning;
+    _npyFrameScale.mm_per_pixel = _npyFrameScale.um_per_pixel / 1000;
+    _npyFrameScale.mm_per_pixel_1x = umPerPixel1x / 1000;
+    _npyFrameScale.calibration_source = "calibrated";
+  }
+  npyUpdateScaleBar();
+  toast(
+    `Calibration saved: ${umPerPixel1x.toFixed(6)} µm/px at 1×1`,
+    "success");
+}
+
+const _npyCalibrationOverlay =
+  document.getElementById("npyCalibrationOverlay");
+_npyCalibrationOverlay.addEventListener("pointerdown", event => {
+  if(!_npyCalibrationActive || event.button !== 0) return;
+  event.preventDefault();
+  _npyCalibrationStartPoint = _npyCalibrationPoint(event);
+  _npyDrawCalibrationLine(
+    _npyCalibrationStartPoint, _npyCalibrationStartPoint);
+  _npyCalibrationOverlay.setPointerCapture(event.pointerId);
+});
+_npyCalibrationOverlay.addEventListener("pointermove", event => {
+  if(!_npyCalibrationActive || !_npyCalibrationStartPoint) return;
+  _npyDrawCalibrationLine(
+    _npyCalibrationStartPoint, _npyCalibrationPoint(event));
+});
+_npyCalibrationOverlay.addEventListener("pointerup", event => {
+  if(!_npyCalibrationActive || !_npyCalibrationStartPoint) return;
+  const endPoint = _npyCalibrationPoint(event);
+  _npyDrawCalibrationLine(_npyCalibrationStartPoint, endPoint);
+  _npyFinishCalibration(endPoint);
+});
+_npyCalibrationOverlay.addEventListener("pointercancel", () => {
+  if(_npyCalibrationActive) _npyStopCalibration();
+});
+
+function _npyClearMeasure() {
+  _npyMeasureActive = false;
+  _npyMeasureStart = null;
+  _npyMeasureDragging = false;
+  _npyMeasureFractions = null;
+  const overlay = document.getElementById("npyMeasureOverlay");
+  if(overlay) {
+    overlay.style.display = "none";
+    overlay.style.pointerEvents = "auto";
+  }
+  ["npyMeasureLine", "npyMeasureStart", "npyMeasureEnd", "npyMeasureLabel"]
+    .forEach(id => {
+      const el = document.getElementById(id);
+      if(el) el.setAttribute("visibility", "hidden");
+    });
+  const btn = document.getElementById("npyMeasureBtn");
+  if(btn) {
+    btn.textContent = "Measure";
+    btn.classList.remove("accent");
+  }
+  const readout = document.getElementById("npyMeasureReadout");
+  if(readout) readout.textContent = "";
+}
+
+function _npyFitMeasureOverlay() {
+  const overlay = document.getElementById("npyMeasureOverlay");
+  const img = document.getElementById("npyImage");
+  if(!overlay || !img) return;
+  const imgRect = img.getBoundingClientRect();
+  if(imgRect.width < 2 || imgRect.height < 2) return;
+  overlay.setAttribute("viewBox", `0 0 ${imgRect.width} ${imgRect.height}`);
+  if(_npyMeasureFractions) {
+    _npyDrawMeasureLine(
+      {x: _npyMeasureFractions.x1 * imgRect.width,
+       y: _npyMeasureFractions.y1 * imgRect.height},
+      {x: _npyMeasureFractions.x2 * imgRect.width,
+       y: _npyMeasureFractions.y2 * imgRect.height},
+      _npyMeasureFractions.label);
+  }
+}
+
+function _npyDrawMeasureLine(startPoint, endPoint, label) {
+  const line = document.getElementById("npyMeasureLine");
+  const start = document.getElementById("npyMeasureStart");
+  const end = document.getElementById("npyMeasureEnd");
+  const text = document.getElementById("npyMeasureLabel");
+  line.setAttribute("x1", startPoint.x);
+  line.setAttribute("y1", startPoint.y);
+  line.setAttribute("x2", endPoint.x);
+  line.setAttribute("y2", endPoint.y);
+  start.setAttribute("cx", startPoint.x);
+  start.setAttribute("cy", startPoint.y);
+  end.setAttribute("cx", endPoint.x);
+  end.setAttribute("cy", endPoint.y);
+  line.setAttribute("visibility", "visible");
+  start.setAttribute("visibility", "visible");
+  end.setAttribute("visibility", "visible");
+  if(label) {
+    text.textContent = label;
+    text.setAttribute("x", (startPoint.x + endPoint.x) / 2);
+    text.setAttribute("y", (startPoint.y + endPoint.y) / 2 - 8);
+    text.setAttribute("visibility", "visible");
+  } else {
+    text.setAttribute("visibility", "hidden");
+  }
+}
+
+function _npyMeasurePoint(event) {
+  const rect = document.getElementById("npyMeasureOverlay").getBoundingClientRect();
+  return {
+    x: Math.max(0, Math.min(rect.width, event.clientX - rect.left)),
+    y: Math.max(0, Math.min(rect.height, event.clientY - rect.top)),
+  };
+}
+
+function npyStartMeasure() {
+  if(_npyMeasureActive) {
+    _npyClearMeasure();
+    npyUpdateScaleBar();
+    return;
+  }
+  const img = document.getElementById("npyImage");
+  if(!img || img.style.display === "none" || !(img.naturalWidth > 0)) {
+    toast("Select an image first", "error");
+    return;
+  }
+  const mmPerPx = _npyMmPerPixel(_npyResolvedScale());
+  if(!(mmPerPx > 0) || !(_npyFrameWidth > 0)) {
+    toast("This image has no mm/px metadata", "error");
+    return;
+  }
+  if(_npyCalibrationActive) _npyStopCalibration(false);
+  _npyMeasureFractions = null;
+  _npyMeasureStart = null;
+  _npyMeasureDragging = false;
+  _npyMeasureActive = true;
+  _npyFitMeasureOverlay();
+  const overlay = document.getElementById("npyMeasureOverlay");
+  overlay.style.pointerEvents = "auto";
+  overlay.style.display = "block";
+  ["npyMeasureLine", "npyMeasureStart", "npyMeasureEnd", "npyMeasureLabel"]
+    .forEach(id => document.getElementById(id).setAttribute("visibility", "hidden"));
+  const btn = document.getElementById("npyMeasureBtn");
+  btn.textContent = "Cancel";
+  btn.classList.add("accent");
+  document.getElementById("npyMeasureReadout").textContent = "";
+  document.getElementById("npyScaleStatus").textContent =
+    `${_npyFormatMmPerPx(mmPerPx)} mm/px · click two points`;
+}
+
+function _npyFinishMeasure(endPoint) {
+  const start = _npyMeasureStart;
+  if(!_npyMeasureActive || !start) return;
+  const overlay = document.getElementById("npyMeasureOverlay");
+  const overlayWidth = overlay.getBoundingClientRect().width;
+  const overlayHeight = overlay.getBoundingClientRect().height;
+  const displayPixels = Math.hypot(endPoint.x - start.x, endPoint.y - start.y);
+  if(displayPixels < 8 || !(overlayWidth > 0) || !(_npyFrameWidth > 0)) {
+    toast("Click two points farther apart", "error");
+    return;
+  }
+  const mmPerPx = _npyMmPerPixel(_npyResolvedScale());
+  if(!(mmPerPx > 0)) {
+    toast("This image has no mm/px metadata", "error");
+    _npyClearMeasure();
+    npyUpdateScaleBar();
+    return;
+  }
+  const sourcePixels = displayPixels * _npyFrameWidth / overlayWidth;
+  const label = _npyFormatDistanceMm(sourcePixels * mmPerPx);
+  _npyMeasureFractions = {
+    x1: start.x / overlayWidth,
+    y1: start.y / overlayHeight,
+    x2: endPoint.x / overlayWidth,
+    y2: endPoint.y / overlayHeight,
+    label,
+  };
+  _npyMeasureActive = false;
+  _npyMeasureStart = null;
+  _npyMeasureDragging = false;
+  overlay.style.pointerEvents = "none";
+  const btn = document.getElementById("npyMeasureBtn");
+  btn.textContent = "Measure";
+  btn.classList.remove("accent");
+  document.getElementById("npyMeasureReadout").textContent = label;
+  _npyDrawMeasureLine(start, endPoint, label);
+  npyUpdateScaleBar();
+}
+
+const _npyMeasureOverlay = document.getElementById("npyMeasureOverlay");
+_npyMeasureOverlay.addEventListener("pointerdown", event => {
+  if(!_npyMeasureActive || event.button !== 0) return;
+  event.preventDefault();
+  const point = _npyMeasurePoint(event);
+  if(!_npyMeasureStart) {
+    _npyMeasureStart = point;
+    _npyMeasureDragging = true;
+    _npyDrawMeasureLine(point, point);
+    _npyMeasureOverlay.setPointerCapture(event.pointerId);
+    document.getElementById("npyScaleStatus").textContent =
+      "Release on the second point, or click it";
+    return;
+  }
+  _npyDrawMeasureLine(_npyMeasureStart, point);
+  _npyFinishMeasure(point);
+});
+_npyMeasureOverlay.addEventListener("pointermove", event => {
+  if(!_npyMeasureActive || !_npyMeasureStart) return;
+  _npyDrawMeasureLine(_npyMeasureStart, _npyMeasurePoint(event));
+});
+_npyMeasureOverlay.addEventListener("pointerup", event => {
+  if(!_npyMeasureActive || !_npyMeasureStart || !_npyMeasureDragging) return;
+  _npyMeasureDragging = false;
+  const endPoint = _npyMeasurePoint(event);
+  const dragged = Math.hypot(
+    endPoint.x - _npyMeasureStart.x, endPoint.y - _npyMeasureStart.y);
+  if(dragged >= 8) {
+    _npyDrawMeasureLine(_npyMeasureStart, endPoint);
+    _npyFinishMeasure(endPoint);
+    return;
+  }
+  document.getElementById("npyScaleStatus").textContent = "Click the second point";
+});
+_npyMeasureOverlay.addEventListener("pointercancel", () => {
+  if(_npyMeasureActive) {
+    _npyClearMeasure();
+    npyUpdateScaleBar();
+  }
+});
+
+document.getElementById("npyImage").addEventListener("load", () => {
+  if(_npyCalibrationActive) _npyFitCalibrationOverlay();
+  npyUpdateScaleBar();
+});
+window.addEventListener("resize", npyUpdateScaleBar);
+if(window.ResizeObserver) {
+  const _npyScaleResizeObserver = new ResizeObserver(npyUpdateScaleBar);
+  _npyScaleResizeObserver.observe(document.getElementById("npyImage"));
+  _npyScaleResizeObserver.observe(
+    document.querySelector("#panel-viewer .npy-preview"));
+}
 
 function _npyInvalidateFrameRequests() {
   ++_npyFrameRequestGeneration;
@@ -4766,6 +6554,7 @@ function npyOpen(filename) {
 let _npySubdir = null;
 
 async function npyRefreshList(autoSelect) {
+  await _npyEnsureScaleConfig();
   const sidebar = document.getElementById("npySidebar");
   const r = await api('cam_list_experiments');
   const experiments = (r && r.experiments) || [];
@@ -4868,13 +6657,94 @@ function _npyFileType(filename, subdir) {
 
 let _npyFileTypeCache = 'snap';
 let _npyChannelColors = [];
+let _npyCurrentChannels = [];
 let _npyStackFiles = [];
+let _npyStackFileMeta = {};
+let _npySelectedChannelIdentity = null;
 let _npyShowingMerge = false;
 let _npyPlayFps = 10;
+const _NPY_COLOR_TO_CUBE = {none:'DIA', blue:'DAPI', green:'GFP', red:'TxRed'};
+
+function _npyChannelLabel(i, colors, channels) {
+  const ch = (channels && channels[i]) || null;
+  const c = (ch && ch.color) || (colors && colors[i]) || 'none';
+  const cube = _NPY_COLOR_TO_CUBE[c] || (c ? (c.charAt(0).toUpperCase() + c.slice(1)) : 'Ch');
+  const pos = ch && ch.position;
+  return pos ? `${cube} @ ${pos}` : cube;
+}
+
+function _npyChannelIdentity(channels, colors, idx) {
+  const ch = (channels && channels[idx]) || {};
+  return {
+    position: ch.position || '',
+    marker_id: ch.marker_id || '',
+    color: ch.color || (colors && colors[idx]) || 'none',
+    filter: ch.filter
+  };
+}
+
+function _npyMatchChannelIndex(channels, identity, fallback) {
+  const fb = (fallback == null || isNaN(fallback)) ? 0 : fallback;
+  if(!identity || !channels || !channels.length) return fb;
+  const pos = identity.position || '';
+  const mid = identity.marker_id || '';
+  const color = identity.color || '';
+  for(let i = 0; i < channels.length; i++) {
+    const ch = channels[i] || {};
+    const samePos = (pos && ch.position === pos) || (mid && ch.marker_id === mid);
+    if(!samePos) continue;
+    if(color && (ch.color || 'none') === color) return i;
+    if(identity.filter != null && ch.filter === identity.filter) return i;
+    if(!color && identity.filter == null) return i;
+  }
+  if(pos || mid) {
+    for(let i = 0; i < channels.length; i++) {
+      const ch = channels[i] || {};
+      if((pos && ch.position === pos) || (mid && ch.marker_id === mid)) return i;
+    }
+  }
+  return fb;
+}
+
+function _npyRememberChannelIdentity(idx) {
+  _npySelectedChannelIdentity = _npyChannelIdentity(
+    _npyCurrentChannels, _npyChannelColors, idx);
+}
+
+function _npyFillChannelSelect(nFrames, colors, channels, fallbackIdx) {
+  const sel = document.getElementById("npyChannelSelect");
+  const identity = _npySelectedChannelIdentity;
+  sel.innerHTML = '';
+  const n = nFrames || (channels && channels.length) || (colors && colors.length) || 0;
+  for(let i = 0; i < n; i++) {
+    sel.innerHTML += `<option value="${i}">${_npyChannelLabel(i, colors, channels)}</option>`;
+  }
+  const fb = (fallbackIdx == null || isNaN(fallbackIdx)) ? 0 : fallbackIdx;
+  const idx = _npyMatchChannelIndex(channels, identity, fb);
+  const clamped = Math.max(0, Math.min(idx, Math.max(0, n - 1)));
+  sel.value = String(clamped);
+  _npyCurrentChannels = channels || [];
+  _npyChannelColors = colors || (_npyCurrentChannels.map(c => (c && c.color) || 'none'));
+  _npyRememberChannelIdentity(clamped);
+  return clamped;
+}
+
+function _npyResolveStackChannel(filename, fallbackIdx) {
+  const meta = _npyStackFileMeta[filename] || {};
+  const channels = meta.channels || _npyCurrentChannels;
+  const n = (meta.n_frames != null) ? meta.n_frames
+    : (channels && channels.length) || _npyChannelColors.length || 1;
+  const fb = fallbackIdx != null ? fallbackIdx
+    : (parseInt(document.getElementById("npyChannelSelect").value) || 0);
+  const idx = _npyMatchChannelIndex(channels, _npySelectedChannelIdentity, fb);
+  return Math.max(0, Math.min(idx, Math.max(0, n - 1)));
+}
 
 function npySelectFile(filename, subdir) {
   npyPlayStop(false);
   npyStackTlStop(false);
+  if(_npyCalibrationActive) _npyStopCalibration(false);
+  if(_npyMeasureActive || _npyMeasureFractions) _npyClearMeasure();
   clearTimeout(_npyDebounce);
   clearTimeout(_npyBcgDebounce);
   const fileSelectionGeneration = ++_npyFileSelectionGeneration;
@@ -4883,7 +6753,14 @@ function npySelectFile(filename, subdir) {
   _npyShowingStack = false;
   _npyShowingMerge = false;
   _npyChannelColors = [];
+  _npyCurrentChannels = [];
+  _npyStackFileMeta = {};
+  _npySelectedChannelIdentity = null;
   _npyFileTypeCache = _npyFileType(filename, subdir);
+  _npyFrameScale = null;
+  _npyFrameWidth = 0;
+  document.getElementById("npyScaleControls").style.display = "flex";
+  npyUpdateScaleBar();
 
   document.querySelectorAll(".npy-file").forEach(el => {
     const match = el.dataset.name === filename && (el.dataset.subdir || null) === subdir;
@@ -5034,17 +6911,17 @@ async function npyLoadFrame(filename, frameIdx, dispMin, dispMax, options) {
   candidate.src = "";
   img.style.display = "block";
   document.getElementById("npyPlaceholder").style.display = "none";
+  _npySetFrameScale(r);
 
-  const _C2C = {none:'DIA', blue:'DAPI', green:'GFP', red:'TxRed'};
+  const _C2C = _NPY_COLOR_TO_CUBE;
   const cubeLabel = r.color && r.color !== 'none'
     ? ` — ${_C2C[r.color] || r.color}` : '';
   const ft = _npyFileTypeCache;
   let dimText;
   if(ft === 'stack') {
-    const chColors = r.colors || [];
-    const chColor = chColors[frameIdx] || r.color || 'none';
-    const chCube = _C2C[chColor] || chColor;
-    dimText = `${filename} — ${chCube} (${frameIdx+1}/${r.n_frames}), ${r.width}×${r.height} px`;
+    if(r.channels) _npyCurrentChannels = r.channels;
+    if(r.colors) _npyChannelColors = r.colors;
+    dimText = `${filename} — ${_npyChannelLabel(frameIdx, _npyChannelColors, _npyCurrentChannels)} (${frameIdx+1}/${r.n_frames}), ${r.width}×${r.height} px`;
   } else if(r.n_frames > 1) {
     dimText = `${filename} — ${r.n_frames} frames, ${r.width}×${r.height} px${cubeLabel}`;
   } else {
@@ -5156,30 +7033,38 @@ async function npyLoadStackFile(filename, subdir, fileSelectionGeneration) {
   img.src = "data:image/jpeg;base64," + r.image;
   img.style.display = "block";
   document.getElementById("npyPlaceholder").style.display = "none";
+  _npySetFrameScale(r);
   _npyDisplayedFrameCommitted(filename, r.frame_idx || 0, subdir, false);
 
   _npyChannelColors = r.colors || [];
-  const _COLOR_TO_CUBE = {none:'DIA', blue:'DAPI', green:'GFP', red:'TxRed'};
-  const sel = document.getElementById("npyChannelSelect");
-  sel.innerHTML = '';
-  for(let i = 0; i < r.n_frames; i++) {
-    const c = _npyChannelColors[i] || 'none';
-    const label = _COLOR_TO_CUBE[c] || c.charAt(0).toUpperCase() + c.slice(1);
-    sel.innerHTML += `<option value="${i}">${label}</option>`;
-  }
-  sel.value = 0;
-
-  const ch0Color = _npyChannelColors[0] || r.color || 'none';
-  const ch0Cube = _COLOR_TO_CUBE[ch0Color] || ch0Color;
+  _npyCurrentChannels = r.channels || [];
+  const selIdx = _npyFillChannelSelect(r.n_frames, _npyChannelColors, _npyCurrentChannels);
   document.getElementById("npyFileInfo").textContent =
-    `${filename} — ${ch0Cube} (1/${r.n_frames}), ${r.width}×${r.height} px`;
+    `${filename} — ${_npyChannelLabel(selIdx, _npyChannelColors, _npyCurrentChannels)} (${selIdx+1}/${r.n_frames}), ${r.width}×${r.height} px`;
+  if(selIdx !== 0) npyLoadFrame(filename, selIdx);
 
   if(subdir) {
     const lr = await api('cam_list_captures', subdir);
     if(!isValid()) return;
-    _npyStackFiles = (lr && lr.files) ? lr.files.map(f => f.name).filter(n => n.startsWith('stack_')).reverse() : [];
+    const files = (lr && lr.files) || [];
+    _npyStackFileMeta = {};
+    _npyStackFiles = [];
+    files.filter(f => (f.name || '').startsWith('stack_')).reverse().forEach(f => {
+      _npyStackFiles.push(f.name);
+      _npyStackFileMeta[f.name] = {
+        channels: f.channels || [],
+        colors: f.colors || [],
+        n_frames: (f.shape && f.shape.length) ? f.shape[0] : 0
+      };
+    });
+    if(!_npyStackFileMeta[filename] && r.channels) {
+      _npyStackFileMeta[filename] = {
+        channels: r.channels, colors: r.colors || [], n_frames: r.n_frames
+      };
+    }
   } else {
     _npyStackFiles = [];
+    _npyStackFileMeta = {};
   }
   const tlRow = document.getElementById("npyStackTlControls");
   if(_npyStackFiles.length > 1) {
@@ -5205,6 +7090,7 @@ function npyChannelChanged() {
   document.getElementById("npyBcgControls").style.display = "block";
   document.getElementById("npyChannelControls").style.display = "flex";
   const ch = parseInt(document.getElementById("npyChannelSelect").value) || 0;
+  _npyRememberChannelIdentity(ch);
   npyLoadFrame(_npyCurrentFile, ch);
 }
 
@@ -5214,6 +7100,8 @@ function npyStackTlChanged() {
   document.getElementById("npyStackTlLabel").textContent =
     `${idx+1} / ${_npyStackFiles.length}`;
   if(_npyStackFiles[idx]) {
+    if(_npyStackFiles[idx] !== _npyCurrentFile &&
+       (_npyMeasureActive || _npyMeasureFractions)) _npyClearMeasure();
     _npyCurrentFile = _npyStackFiles[idx];
     document.querySelectorAll(".npy-file").forEach(el => {
       const match = el.dataset.name === _npyCurrentFile && (el.dataset.subdir || null) === _npySubdir;
@@ -5222,7 +7110,11 @@ function npyStackTlChanged() {
     if(_npyShowingMerge) {
       _npyDoMerge();
     } else {
-      const ch = parseInt(document.getElementById("npyChannelSelect").value) || 0;
+      const meta = _npyStackFileMeta[_npyCurrentFile] || {};
+      const fb = parseInt(document.getElementById("npyChannelSelect").value) || 0;
+      const ch = _npyFillChannelSelect(meta.n_frames || _npyChannelColors.length || 1,
+                            meta.colors || _npyChannelColors,
+                            meta.channels || _npyCurrentChannels, fb);
       npyLoadFrame(_npyCurrentFile, ch);
     }
   }
@@ -5259,6 +7151,8 @@ async function npyStackTlPlayToggle() {
     slider.value = idx;
     document.getElementById("npyStackTlLabel").textContent =
       `${idx+1} / ${_npyStackFiles.length}`;
+    if(filename !== _npyCurrentFile &&
+       (_npyMeasureActive || _npyMeasureFractions)) _npyClearMeasure();
     _npyCurrentFile = filename;
     if(_npyShowingMerge) {
       const r = await _npyDoMerge(lockedRanges, {stackPlaybackGeneration});
@@ -5267,7 +7161,11 @@ async function npyStackTlPlayToggle() {
         lockedRanges = r.ranges;
       }
     } else {
-      const ch = parseInt(document.getElementById("npyChannelSelect").value) || 0;
+      const meta = _npyStackFileMeta[filename] || {};
+      const fb = parseInt(document.getElementById("npyChannelSelect").value) || 0;
+      const ch = _npyFillChannelSelect(meta.n_frames || _npyChannelColors.length || 1,
+                            meta.colors || _npyChannelColors,
+                            meta.channels || _npyCurrentChannels, fb);
       const r = await npyLoadFrame(filename, ch, lockedMin, lockedMax,
                                    {stackPlaybackGeneration});
       if(!isValid(filename)) break;
@@ -5308,6 +7206,7 @@ async function _npyRenderStack() {
   if(r.error) { toast(r.error, "error"); return; }
   const img = document.getElementById("npyImage");
   img.src = "data:image/jpeg;base64," + r.image;
+  _npySetFrameScale({scale:_npyFrameScale, width:r.width});
   document.getElementById("npyFileInfo").textContent =
     `${_npyCurrentFile} — Max projection of ${r.n_frames} frames, ${r.width}×${r.height} px`;
 }
@@ -5329,7 +7228,6 @@ async function npyStackFrames() {
 /* ── Stack: merge all channels into multi-color composite ── */
 let _npyMergeDebounce = null;
 let _npyMergeWeights = [];
-const _COLOR_TO_CUBE_M = {none:'DIA', blue:'DAPI', green:'GFP', red:'TxRed'};
 
 async function npyMergeChannels() {
   if(!_npyCurrentFile) return;
@@ -5362,14 +7260,14 @@ function _npyBuildMergeSliders() {
   const container = document.getElementById("npyMergeSliders");
   container.innerHTML = '';
   for(let i = 0; i < _npyChannelColors.length; i++) {
-    const c = _npyChannelColors[i] || 'none';
-    const cube = _COLOR_TO_CUBE_M[c] || c;
+    const cube = _npyChannelLabel(i, _npyChannelColors, _npyCurrentChannels);
+    const c = (_npyCurrentChannels[i] && _npyCurrentChannels[i].color) || _npyChannelColors[i] || 'none';
     const hex = _ACQ_COLOR_HEX[c] || '#888';
     const row = document.createElement("div");
     row.className = "npy-controls";
     row.innerHTML = `
       <span style="display:inline-block;width:10px;height:10px;background:${hex};border-radius:2px;flex-shrink:0"></span>
-      <span style="font-size:11px;color:var(--text2);min-width:40px">${cube}</span>
+      <span style="font-size:11px;color:var(--text2);min-width:90px">${cube}</span>
       <input type="range" id="npyMergeW${i}" min="0" max="100" value="100"
              style="flex:1;accent-color:${hex}" oninput="npyMergeSliderChanged(${i})">
       <span id="npyMergeWVal${i}" style="font-size:11px;min-width:28px;text-align:right">100</span>`;
@@ -5415,7 +7313,14 @@ async function _npyDoMerge(lockedRanges, options) {
   img.src = "data:image/jpeg;base64," + r.image;
   img.style.display = "block";
   document.getElementById("npyPlaceholder").style.display = "none";
-  const labels = (r.colors || []).map(c => _COLOR_TO_CUBE_M[c] || c).join(' + ');
+  _npySetFrameScale({
+    scale:_npyCommonChannelScale(_npyCurrentChannels),
+    width:r.width
+  });
+  const labels = (_npyCurrentChannels.length
+    ? _npyCurrentChannels.map((_, i) => _npyChannelLabel(i, r.colors || _npyChannelColors, _npyCurrentChannels))
+    : (r.colors || []).map(c => _NPY_COLOR_TO_CUBE[c] || c)
+  ).join(' + ');
   document.getElementById("npyFileInfo").textContent =
     `${filename} — Merge: ${labels}, ${r.width}×${r.height} px`;
   return r;
@@ -5488,7 +7393,8 @@ async function npyExportVideo() {
       r = await api('cam_export_merge_mp4', _npyStackFiles, _npyMergeWeights,
                      gamma, fps, _npySubdir);
     } else {
-      const ch = parseInt(document.getElementById("npyChannelSelect").value) || 0;
+      const ch = _npyResolveStackChannel(_npyStackFiles[0],
+        parseInt(document.getElementById("npyChannelSelect").value) || 0);
       const bcg = _npyBcgValues();
       r = await api('cam_export_stack_tl_mp4', _npyStackFiles, ch, fps,
                      bcg.brightness, bcg.contrast, bcg.gamma, _npySubdir,
