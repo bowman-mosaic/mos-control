@@ -135,9 +135,8 @@ _FILTER_POS_COLOR = {
     4: "red",       # TxRed
 }
 
-# CoolSNAP EZ nominal 6.45 µm sensor pixels.  Values below are the sample-plane
-# µm/pixel at 1×1 binning for the microscope's current 1× camera path.  A user
-# calibration made with a stage micrometer replaces any nominal value.
+# CoolSNAP EZ pixel pitch. Magnification names the turret positions. mm/px is
+# stored only after a stage-micrometer calibration for that objective.
 _SCALE_CONFIG_KEY = "coolsnap_scale"
 _OBJECTIVE_MAGNIFICATIONS = {
     1: 2.0,
@@ -545,24 +544,21 @@ def _sync_objective_scale(objective, saved=None):
 
 
 def _default_scale_config():
-    objectives = {}
-    for pos, mag in _OBJECTIVE_MAGNIFICATIONS.items():
-        um = _CAMERA_PIXEL_PITCH_UM / mag
-        objectives[str(pos)] = {
-            "magnification": mag,
-            "um_per_pixel_1x": um,
-            "mm_per_pixel_1x": um / 1000.0,
-            "calibrated": False,
-        }
     return {
         "camera": "CoolSNAP EZ",
         "pixel_pitch_um": _CAMERA_PIXEL_PITCH_UM,
-        "objectives": objectives,
+        "objectives": {
+            str(pos): {
+                "magnification": mag,
+                "calibrated": False,
+            }
+            for pos, mag in _OBJECTIVE_MAGNIFICATIONS.items()
+        },
     }
 
 
 def _get_scale_config():
-    """Return persisted per-objective calibration merged with safe defaults."""
+    """Return per-objective calibration. Uncalibrated objectives have no mm/px."""
     defaults = _default_scale_config()
     try:
         from modules import config as app_config
@@ -574,9 +570,13 @@ def _get_scale_config():
     saved_objectives = saved.get("objectives")
     if isinstance(saved_objectives, dict):
         for pos, value in saved_objectives.items():
-            if pos in defaults["objectives"] and isinstance(value, dict):
-                defaults["objectives"][pos].update(value)
-                _sync_objective_scale(defaults["objectives"][pos], value)
+            if pos not in defaults["objectives"] or not isinstance(value, dict):
+                continue
+            if not value.get("calibrated"):
+                continue
+            defaults["objectives"][pos].update(value)
+            _sync_objective_scale(defaults["objectives"][pos], value)
+            defaults["objectives"][pos]["calibrated"] = True
     return defaults
 
 
@@ -644,6 +644,10 @@ def _capture_scale_metadata(objective=None, binning=None, z_nm=None):
 
     calibration = _get_scale_config()["objectives"].get(str(pos))
     result["objective_position"] = pos
+    if not calibration or not calibration.get("calibrated"):
+        if calibration and calibration.get("magnification") is not None:
+            result["objective_magnification"] = float(calibration["magnification"])
+        return result
     scale_1x = _objective_scale_1x(calibration)
     if scale_1x is None:
         return result
@@ -655,9 +659,7 @@ def _capture_scale_metadata(objective=None, binning=None, z_nm=None):
         "um_per_pixel_1x": base_um,
         "mm_per_pixel": base_mm * b,
         "mm_per_pixel_1x": base_mm,
-        "calibration_source": (
-            "calibrated" if calibration.get("calibrated") else "nominal"
-        ),
+        "calibration_source": "calibrated",
     })
     return result
 

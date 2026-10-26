@@ -212,6 +212,9 @@ option { background:#fff; }
   display:flex; align-items:center; gap:6px; flex-wrap:wrap; flex-shrink:0;
   padding:6px 0 0; font-size:11px; color:var(--text2);
 }
+.live-mosaic-controls { display:contents; }
+.setup-live-mount .live-mosaic-controls,
+.setup-live-mount #liveMosaicStatus { display:none !important; }
 .live-cal-controls input[type=number] { width:78px; padding:3px 6px; }
 #liveScaleReadout { font-weight:700; color:var(--text); white-space:nowrap; }
 .live-calibration-overlay { position:absolute; display:none; z-index:5;
@@ -1070,6 +1073,7 @@ option { background:#fff; }
             <input type="number" id="liveAfSteps" value="11" step="1" min="3" title="Number of Z positions sampled" style="width:42px">
             <button class="btn btn-sm" onclick="liveAutoFocus()" id="liveAfBtn">Auto Focus</button>
 
+            <div class="live-mosaic-controls">
             <div class="stage-sep"></div>
 
             <label title="How much of each field is shared with the next tile">Overlap</label>
@@ -1078,6 +1082,7 @@ option { background:#fff; }
             <span style="font-size:10px;color:var(--text3)">%</span>
             <button class="btn btn-sm accent" id="liveMosaicBtn" onclick="liveMosaic3x3()"
                     title="Save nine fields in a 3×3 grid centered on this position">3×3 Mosaic</button>
+            </div>
           </div>
           <div id="liveAfStatus" style="font-size:11px;color:var(--text3);padding:0 4px 4px;display:none"></div>
           <div id="liveMosaicStatus" style="font-size:11px;color:var(--text3);padding:0 4px 4px;display:none"></div>
@@ -2337,9 +2342,10 @@ function _liveFormatMmPerPx(mm) {
 }
 
 function _liveObjectiveMm1x(obj) {
-  const mm = parseFloat(obj && obj.mm_per_pixel_1x);
+  if(!obj || !obj.calibrated) return NaN;
+  const mm = parseFloat(obj.mm_per_pixel_1x);
   if(mm > 0) return mm;
-  const um = parseFloat(obj && obj.um_per_pixel_1x);
+  const um = parseFloat(obj.um_per_pixel_1x);
   return um > 0 ? um / 1000 : NaN;
 }
 
@@ -2382,17 +2388,17 @@ async function liveRefreshScaleReadout() {
   const name = _LIVE_OBJECTIVE_NAMES[pos] || ("pos " + pos);
   const cur = document.getElementById("scopeNosepieceCur");
   if(!(mm1x > 0)) {
-    readout.textContent = "— mm/px";
+    readout.textContent = `— mm/px · ${name}`;
+    readout.title = "Calibrate this objective to set mm/px";
     if(cur) cur.textContent = name;
     return;
   }
-  const source = obj.calibrated ? "calibrated" : "nominal";
   const imageMm = mm1x * binning;
   const binText = binning === 1
     ? ""
     : ` · image ${_liveFormatMmPerPx(imageMm)} mm/px at ${binning}×${binning}`;
   readout.textContent =
-    `${_liveFormatMmPerPx(mm1x)} mm/px · ${name} · ${source}${binText}`;
+    `${_liveFormatMmPerPx(mm1x)} mm/px · ${name} · calibrated${binText}`;
   readout.title = "mm/px belongs to this objective at 1×1 binning";
   if(cur) cur.textContent = `${name} · ${_liveFormatMmPerPx(mm1x)} mm/px`;
 }
@@ -6048,8 +6054,14 @@ function _npyResolvedScale() {
   const result = Object.assign({}, imageScale, {binning});
   const configured =
     _npyScaleConfig.objectives?.[String(result.objective_position)];
-  // A measured calibration can safely replace nominal metadata for captures
-  // made on the same fixed camera path.
+  // Factory pitch is not a measurement. Use it only after this objective
+  // has a saved stage-micrometer calibration.
+  if(result.calibration_source !== "calibrated") {
+    delete result.um_per_pixel;
+    delete result.um_per_pixel_1x;
+    delete result.mm_per_pixel;
+    delete result.mm_per_pixel_1x;
+  }
   if(configured?.calibrated && result.calibration_source !== "calibrated") {
     const mm1x = parseFloat(configured.mm_per_pixel_1x);
     const um1x = mm1x > 0 ? mm1x * 1000 : parseFloat(configured.um_per_pixel_1x);
@@ -6103,7 +6115,8 @@ function npyUpdateScaleBar() {
   if(!visible.checked || img.style.display === "none" || !scale) {
     overlay.style.display = "none";
     if(status && !_npyCalibrationActive && !_npyMeasureActive) status.textContent = visible.checked
-      ? "No mm/px metadata (legacy image)" : "";
+      ? (_npyFrameScale && _npyFrameScale.objective_position != null
+          ? "No calibrated mm/px for this objective" : "No mm/px metadata") : "";
     return;
   }
 

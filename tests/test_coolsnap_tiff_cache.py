@@ -225,6 +225,62 @@ def test_scale_metadata_applies_calibration_and_binning(monkeypatch):
     }
 
 
+def test_uncalibrated_objective_does_not_save_stock_scale(monkeypatch):
+    monkeypatch.setattr(
+        coolsnap,
+        "_get_scale_config",
+        lambda: {
+            "objectives": {
+                "1": {
+                    "magnification": 2.0,
+                    "um_per_pixel_1x": 3.225,
+                    "mm_per_pixel_1x": 0.003225,
+                    "calibrated": False,
+                }
+            }
+        },
+    )
+
+    scale = coolsnap._capture_scale_metadata(objective=1, binning=1, z_nm=1)
+
+    assert scale["objective_magnification"] == 2.0
+    assert "mm_per_pixel" not in scale
+    assert "um_per_pixel" not in scale
+
+
+def test_default_objectives_have_no_stock_mm_per_pixel():
+    for objective in coolsnap._default_scale_config()["objectives"].values():
+        assert objective["calibrated"] is False
+        assert "mm_per_pixel_1x" not in objective
+        assert "um_per_pixel_1x" not in objective
+
+
+def test_saved_uncalibrated_scale_is_ignored(monkeypatch):
+    monkeypatch.setattr(
+        "modules.config.load",
+        lambda key: {
+            "objectives": {
+                "2": {
+                    "magnification": 4.0,
+                    "mm_per_pixel_1x": 0.001613,
+                    "calibrated": False,
+                },
+                "4": {
+                    "magnification": 10.0,
+                    "mm_per_pixel_1x": 0.0005,
+                    "calibrated": True,
+                },
+            }
+        },
+    )
+
+    config = coolsnap._get_scale_config()
+
+    assert "mm_per_pixel_1x" not in config["objectives"]["2"]
+    assert config["objectives"]["4"]["mm_per_pixel_1x"] == 0.0005
+    assert config["objectives"]["4"]["calibrated"] is True
+
+
 def test_objective_mm_per_pixel_is_copied_onto_the_image(monkeypatch):
     monkeypatch.setattr(
         coolsnap,
